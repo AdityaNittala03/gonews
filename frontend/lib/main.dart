@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:go_router/go_router.dart';
 
 import 'core/constants/app_constants.dart';
 import 'core/constants/color_constants.dart';
@@ -128,7 +129,7 @@ class _SplashScreenState extends State<SplashScreen>
     if (mounted) {
       // TODO: Check if user is already logged in
       // For now, always navigate to sign-in
-      // context.go('/sign-in');
+      context.go('/sign-in');
     }
   }
 

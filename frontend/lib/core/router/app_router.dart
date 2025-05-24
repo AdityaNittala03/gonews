@@ -5,6 +5,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../main.dart';
+import '../../features/auth/presentation/screens/sign_in_screen.dart';
+import '../../features/auth/presentation/screens/sign_up_screen.dart';
+import '../../features/auth/presentation/screens/forgot_password_screen.dart'; // lib/core/router/app_router.dart
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../main.dart';
+import '../../features/auth/presentation/screens/sign_in_screen.dart';
+import '../../features/auth/presentation/screens/sign_up_screen.dart';
+import '../../features/auth/presentation/screens/forgot_password_screen.dart';
 
 // Router Provider
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -22,32 +34,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/sign-in',
         name: 'signIn',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Sign In Screen\n(Will be implemented in Week 1)'),
-          ),
-        ),
+        builder: (context, state) => const SignInScreen(),
       ),
 
       GoRoute(
         path: '/sign-up',
         name: 'signUp',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Sign Up Screen\n(Will be implemented in Week 1)'),
-          ),
-        ),
+        builder: (context, state) => const SignUpScreen(),
       ),
 
       GoRoute(
         path: '/forgot-password',
         name: 'forgotPassword',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child:
-                Text('Forgot Password Screen\n(Will be implemented in Week 1)'),
-          ),
-        ),
+        builder: (context, state) => const ForgotPasswordScreen(),
       ),
 
       // Main App Routes
