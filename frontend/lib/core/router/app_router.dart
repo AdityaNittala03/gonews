@@ -7,7 +7,10 @@ import 'package:go_router/go_router.dart';
 import '../../main.dart';
 import '../../features/auth/presentation/screens/sign_in_screen.dart';
 import '../../features/auth/presentation/screens/sign_up_screen.dart';
-import '../../features/auth/presentation/screens/forgot_password_screen.dart'; // lib/core/router/app_router.dart
+import '../../features/auth/presentation/screens/forgot_password_screen.dart';
+import '../../features/news/presentation/screens/home_screen.dart';
+import '../../features/news/presentation/screens/article_detail_screen.dart';
+import '../../features/search/presentation/screens/search_screen.dart'; // lib/core/router/app_router.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -53,21 +56,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/home',
         name: 'home',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Home Screen\n(Will be implemented in Week 2)'),
-          ),
-        ),
+        builder: (context, state) => const HomeScreen(),
       ),
 
       GoRoute(
         path: '/search',
         name: 'search',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Search Screen\n(Will be implemented in Week 2)'),
-          ),
-        ),
+        builder: (context, state) => const SearchScreen(),
       ),
 
       GoRoute(
@@ -75,12 +70,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'article',
         builder: (context, state) {
           final articleId = state.pathParameters['id'] ?? '';
-          return Placeholder(
-            child: Center(
-              child: Text(
-                  'Article Detail Screen\nArticle ID: $articleId\n(Will be implemented in Week 2)'),
-            ),
-          );
+          return ArticleDetailScreen(articleId: articleId);
         },
       ),
 
