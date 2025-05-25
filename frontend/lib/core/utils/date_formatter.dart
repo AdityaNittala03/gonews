@@ -174,6 +174,21 @@ class DateFormatter {
     }
   }
 
+  /// Get time ago in a human-readable format
+  static String getTimeAgo(DateTime dateTime) {
+    final Duration difference = DateTime.now().difference(dateTime);
+
+    if (difference.inDays > 1) {
+      return '${difference.inDays} days ago';
+    } else if (difference.inHours > 1) {
+      return '${difference.inHours} hours ago';
+    } else if (difference.inMinutes > 1) {
+      return '${difference.inMinutes} minutes ago';
+    } else {
+      return 'Just now';
+    }
+  }
+
   /// Parse ISO string to DateTime
   static DateTime? parseISOString(String? isoString) {
     if (isoString == null || isoString.isEmpty) return null;

@@ -15,6 +15,8 @@ import '../../data/models/category_model.dart';
 import '../widgets/article_card.dart';
 import '../widgets/category_chip.dart';
 
+import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
+
 // Providers for news data
 final newsProvider =
     FutureProvider.family<List<Article>, String>((ref, category) async {
@@ -158,10 +160,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 icon: const Icon(Icons.search),
                 color: AppColors.textPrimary,
               ),
-              IconButton(
-                onPressed: _showNotifications,
-                icon: const Icon(Icons.notifications_outlined),
-                color: AppColors.textPrimary,
+              // Bookmark Icon with Badge (replacing notification icon)
+              Consumer(
+                builder: (context, ref, child) {
+                  final bookmarkCount = ref.watch(bookmarkCountProvider);
+
+                  return Stack(
+                    children: [
+                      IconButton(
+                        onPressed: () => context.push('/bookmarks'),
+                        icon: const Icon(Icons.bookmark_outline),
+                        color: AppColors.textPrimary,
+                        tooltip: 'Bookmarks',
+                      ),
+                      if (bookmarkCount > 0)
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 14,
+                              minHeight: 14,
+                            ),
+                            child: Text(
+                              bookmarkCount > 99 ? '99+' : '$bookmarkCount',
+                              style: const TextStyle(
+                                color: AppColors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(width: 8),
               GestureDetector(
@@ -410,9 +449,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _toggleBookmark(Article article) {
-    // TODO: Implement actual bookmark functionality
+    // Get the bookmark provider and toggle bookmark
+    ref.read(bookmarksProvider.notifier).toggleBookmark(article);
+
+    final isBookmarked = ref.read(bookmarkStatusProvider(article.id));
     final message =
-        article.isBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks';
+        isBookmarked ? 'Added to bookmarks' : 'Removed from bookmarks';
     _showInfoSnackbar(message);
   }
 
@@ -427,10 +469,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       duration: const Duration(milliseconds: 500),
       curve: Curves.easeOut,
     );
-  }
-
-  void _showNotifications() {
-    _showInfoSnackbar('Notifications feature coming soon!');
   }
 
   void _showSuccessSnackbar(String message) {

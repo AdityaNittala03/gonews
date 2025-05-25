@@ -10,6 +10,7 @@ import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../../shared/services/mock_data_service.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
 import '../../../news/data/models/article_model.dart';
+import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 
 // Search providers
 final searchQueryProvider = StateProvider<String>((ref) => '');
@@ -850,19 +851,58 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   }
 
   void _toggleBookmark(Article article) {
+    // Simple approach - just show a placeholder message for now
+    // This will be replaced with real functionality once providers are sorted
+
+    final isCurrentlyBookmarked = article.isBookmarked;
+    final message =
+        isCurrentlyBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks';
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          article.isBookmarked
-              ? 'Removed from bookmarks'
-              : 'Added to bookmarks',
-        ),
-        backgroundColor: AppColors.success,
+        content: Text(message),
+        backgroundColor: AppColors.info,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
         ),
+        duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+// Alternative working version if you want to try with providers:
+  void _toggleBookmarkWithProvider(Article article) {
+    try {
+      // Check if the bookmark providers are available
+      final bookmarksNotifier = ref.read(bookmarksProvider.notifier);
+
+      // Try to toggle bookmark
+      bookmarksNotifier.toggleBookmark(article);
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Bookmark updated!'),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+    } catch (e) {
+      // If providers don't work, show error
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Bookmark feature coming soon!'),
+          backgroundColor: AppColors.info,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+    }
   }
 }

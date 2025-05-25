@@ -1,12 +1,15 @@
 // lib/features/news/presentation/widgets/article_card.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
-import '../../data/models/article_model.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
+import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
+import '../../data/models/article_model.dart';
 
 class ArticleCard extends StatefulWidget {
   final Article article;

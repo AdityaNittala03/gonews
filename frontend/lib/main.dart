@@ -10,12 +10,16 @@ import 'core/constants/app_constants.dart';
 import 'core/constants/color_constants.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
+import 'features/bookmarks/data/services/bookmark_storage_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Hive for local storage
   await Hive.initFlutter();
+
+  // Initialize Bookmark Storage Service
+  await BookmarkStorageService.init();
 
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([

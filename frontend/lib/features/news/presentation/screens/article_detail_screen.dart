@@ -1,29 +1,33 @@
 // lib/features/news/presentation/screens/article_detail_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
-import '../../../../shared/widgets/common/custom_button.dart';
-import '../../../../shared/services/mock_data_service.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
+import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
+import '../providers/news_providers.dart';
 import '../../data/models/article_model.dart';
+import '../../data/services/mock_news_service.dart';
+import '../../../../shared/widgets/common/custom_button.dart';
 import '../widgets/article_card.dart';
 
 // Provider for article detail
 final articleDetailProvider =
     FutureProvider.family<Article?, String>((ref, id) async {
-  final mockService = ref.read(mockDataServiceProvider);
+  final mockService = ref.read(newsServiceProvider);
   return await mockService.getArticleById(id);
 });
 
 // Provider for related articles
 final relatedArticlesProvider =
     FutureProvider.family<List<Article>, String>((ref, articleId) async {
-  final mockService = ref.read(mockDataServiceProvider);
+  final mockService = ref.read(newsServiceProvider);
   // For demo, return a few articles from the same category
   final article = await mockService.getArticleById(articleId);
   if (article != null) {

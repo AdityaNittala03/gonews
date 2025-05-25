@@ -20,6 +20,14 @@ import '../../main.dart';
 import '../../features/auth/presentation/screens/sign_in_screen.dart';
 import '../../features/auth/presentation/screens/sign_up_screen.dart';
 import '../../features/auth/presentation/screens/forgot_password_screen.dart';
+import '../../features/bookmarks/presentation/screens/bookmarks_screen.dart';
+import '../../features/profile/presentation/screens/profile_screen.dart';
+import '../../shared/widgets/common/bottom_navigation_wrapper.dart';
+import '../../features/profile/presentation/screens/help_support_screen.dart';
+import '../../features/profile/presentation/screens/edit_profile_screen.dart';
+import '../../features/profile/presentation/screens/notification_settings_screen.dart';
+import '../../features/profile/presentation/screens/privacy_policy_screen.dart';
+//import '../../features/profile/presentation/screens/terms_of_service_screen.dart';
 
 // Router Provider
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -66,32 +74,50 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
 
       GoRoute(
+        path: '/bookmarks',
+        name: 'bookmarks',
+        builder: (context, state) => const BookmarksScreen(),
+      ),
+
+      GoRoute(
+        path: '/profile',
+        name: 'profile',
+        builder: (context, state) => const ProfileScreen(),
+      ),
+
+      GoRoute(
+        path: '/edit-profile',
+        builder: (context, state) => const EditProfileScreen(),
+      ),
+
+      GoRoute(
+        path: '/notification-settings',
+        builder: (context, state) => const NotificationSettingsScreen(),
+      ),
+
+      GoRoute(
+        path: '/help-support',
+        builder: (context, state) => const HelpSupportScreen(),
+      ),
+
+      GoRoute(
+        path: '/privacy-policy',
+        builder: (context, state) => const PrivacyPolicyScreen(),
+      ),
+
+// Uncomment this line when TermsOfServiceScreen is implemented
+      // GoRoute(
+      //   path: '/terms-of-service',
+      //   builder: (context, state) => const TermsOfServiceScreen(),
+      // ),
+
+      GoRoute(
         path: '/article/:id',
         name: 'article',
         builder: (context, state) {
           final articleId = state.pathParameters['id'] ?? '';
           return ArticleDetailScreen(articleId: articleId);
         },
-      ),
-
-      GoRoute(
-        path: '/bookmarks',
-        name: 'bookmarks',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Bookmarks Screen\n(Will be implemented in Week 3)'),
-          ),
-        ),
-      ),
-
-      GoRoute(
-        path: '/profile',
-        name: 'profile',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Profile Screen\n(Will be implemented in Week 3)'),
-          ),
-        ),
       ),
 
       GoRoute(

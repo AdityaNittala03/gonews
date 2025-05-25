@@ -3,8 +3,10 @@
 class AppConstants {
   // App Information
   static const String appName = 'GoNews';
-  static const String appTagline = 'India ki Awaaz';
   static const String appVersion = '1.0.0';
+  static const String appTagline = 'India ki Awaaz';
+  static const String appDescription =
+      'Your trusted source for Indian news and global updates';
 
   // Timing Constants
   static const int splashDuration = 3000; // milliseconds
@@ -67,4 +69,14 @@ class AppConstants {
   // Demo Credentials
   static const String demoEmail = 'demo@gonews.com';
   static const String demoPassword = 'password';
+
+  // Contact Information
+  static const String supportEmail = 'support@gonews.com';
+  static const String feedbackEmail = 'feedback@gonews.com';
+  static const String websiteUrl = 'https://gonews.com';
+
+  // Social Links
+  static const String twitterUrl = 'https://twitter.com/gonews';
+  static const String facebookUrl = 'https://facebook.com/gonews';
+  static const String instagramUrl = 'https://instagram.com/gonews';
 }
