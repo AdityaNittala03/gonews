@@ -632,7 +632,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   void _openStorageSettings() {
-    _showComingSoonSnackbar('Storage Settings');
+    context.push('/storage-settings');
   }
 
   void _openHelp() {

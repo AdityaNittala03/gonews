@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:gonews/core/services/storage_service.dart';
 
 import '../../main.dart';
 import '../../features/auth/presentation/screens/sign_in_screen.dart';
@@ -27,13 +28,15 @@ import '../../features/profile/presentation/screens/help_support_screen.dart';
 import '../../features/profile/presentation/screens/edit_profile_screen.dart';
 import '../../features/profile/presentation/screens/notification_settings_screen.dart';
 import '../../features/profile/presentation/screens/privacy_policy_screen.dart';
-//import '../../features/profile/presentation/screens/terms_of_service_screen.dart';
+import '../../features/profile/presentation/screens/terms_of_service_screen.dart';
+import '../../features/profile/presentation/screens/storage_settings_screen.dart';
+import '../../core/services/storage_service.dart';
 
 // Router Provider
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/',
-    routes: [
+    routes: <RouteBase>[
       // Splash Screen
       GoRoute(
         path: '/',
@@ -105,11 +108,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const PrivacyPolicyScreen(),
       ),
 
-// Uncomment this line when TermsOfServiceScreen is implemented
-      // GoRoute(
-      //   path: '/terms-of-service',
-      //   builder: (context, state) => const TermsOfServiceScreen(),
-      // ),
+      GoRoute(
+        path: '/terms-of-service',
+        builder: (context, state) => const TermsOfServiceScreen(),
+      ),
+
+      GoRoute(
+        path: '/storage-screen',
+        builder: (context, state) => const StorageSettingsScreen(),
+      ),
 
       GoRoute(
         path: '/article/:id',
