@@ -85,7 +85,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       appBar: _buildAppBar(),
       body: FadeTransition(
         opacity: _fadeAnimation,

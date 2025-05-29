@@ -143,7 +143,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     final searchResults = ref.watch(searchResultsProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       body: SafeArea(
         child: FadeTransition(
           opacity: _fadeAnimation,

@@ -130,7 +130,7 @@ class _NotificationSettingsScreenState
     final settings = ref.watch(notificationSettingsProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       appBar: _buildAppBar(),
       body: FadeTransition(
         opacity: _fadeAnimation,

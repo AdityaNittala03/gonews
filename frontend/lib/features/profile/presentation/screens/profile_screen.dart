@@ -9,6 +9,8 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/color_constants.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
+import '../../../../core/providers/theme_provider.dart' as theme_provider;
+import '../../../../core/theme/app_theme.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -67,7 +69,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     final bookmarkCount = ref.watch(bookmarkCountProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       appBar: AppBar(
         title: const Text('Profile'),
         backgroundColor: AppColors.white,
@@ -392,10 +394,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             title: 'Dark Mode',
             subtitle: 'Switch to dark theme',
             onTap: _toggleDarkMode,
-            trailing: Switch(
-              value: false, // TODO: Connect to theme provider
-              onChanged: (value) => _toggleDarkMode(),
-              activeColor: AppColors.primary,
+            trailing: Consumer(
+              builder: (context, ref, child) {
+                final themeState = ref.watch(theme_provider.themeProvider);
+                return Switch(
+                  value: themeState.isDarkMode,
+                  onChanged: (value) => _toggleDarkMode(),
+                  activeColor: AppColors.primary,
+                );
+              },
             ),
           ),
           _buildSettingsItem(
@@ -624,7 +631,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   void _toggleDarkMode() {
-    _showComingSoonSnackbar('Dark Mode');
+    final currentTheme = ref.read(theme_provider.themeProvider);
+    final newMode = currentTheme.isDarkMode
+        ? theme_provider.ThemeMode.light
+        : theme_provider.ThemeMode.dark;
+    ref.read(theme_provider.themeProvider.notifier).setThemeMode(newMode);
   }
 
   void _openLanguageSettings() {

@@ -114,7 +114,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
 
       GoRoute(
-        path: '/storage-screen',
+        path: '/storage-settings',
         builder: (context, state) => const StorageSettingsScreen(),
       ),
 

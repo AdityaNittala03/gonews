@@ -75,7 +75,7 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
             .toList();
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       appBar: _buildAppBar(selectedBookmarks.length, bookmarkCount),
       body: FadeTransition(
         opacity: _fadeAnimation,

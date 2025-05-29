@@ -58,7 +58,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.white,
+      backgroundColor: AppColors.getBackgroundColor(context),
       body: SafeArea(
         child: FadeTransition(
           opacity: _fadeAnimation,

@@ -11,6 +11,8 @@ import 'core/constants/color_constants.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'features/bookmarks/data/services/bookmark_storage_service.dart';
+import 'package:flutter/material.dart' as flutter show ThemeMode;
+import '../core/providers/theme_provider.dart' as theme_provider;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,6 +52,7 @@ class GoNewsApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+    final themeState = ref.watch(theme_provider.themeProvider);
 
     return MaterialApp.router(
       title: AppConstants.appName,
@@ -58,10 +61,11 @@ class GoNewsApp extends ConsumerWidget {
       // Theme Configuration
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode:
-          ThemeMode.light, // TODO: Make this dynamic based on user preference
-
-      // Router Configuration
+      themeMode: themeState.mode == theme_provider.ThemeMode.system
+          ? flutter.ThemeMode.system
+          : (themeState.isDarkMode
+              ? flutter.ThemeMode.dark
+              : flutter.ThemeMode.light),
       routerConfig: router,
 
       // Localization (for future implementation)

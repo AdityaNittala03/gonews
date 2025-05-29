@@ -71,7 +71,7 @@ class _StorageSettingsScreenState extends ConsumerState<StorageSettingsScreen>
     final recommendationsAsync = ref.watch(storageRecommendationsProvider);
 
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       appBar: _buildAppBar(),
       body: FadeTransition(
         opacity: _fadeAnimation,

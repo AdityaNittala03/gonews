@@ -107,4 +107,27 @@ class AppColors {
   static Color getCategoryColorWithOpacity(String category, double opacity) {
     return getCategoryColor(category).withOpacity(opacity);
   }
+
+  // Helper methods to get theme-aware colors
+  static Color getBackgroundColor(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? backgroundDark
+        : backgroundLight;
+  }
+
+  static Color getCardColor(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark ? cardDark : white;
+  }
+
+  static Color getTextPrimaryColor(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? textPrimaryDark
+        : textPrimary;
+  }
+
+  static Color getTextSecondaryColor(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? textSecondaryDark
+        : textSecondary;
+  }
 }

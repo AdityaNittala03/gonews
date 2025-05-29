@@ -72,7 +72,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.white,
+      backgroundColor: AppColors.getBackgroundColor(context),
       body: SafeArea(
         child: AnimatedBuilder(
           animation: _animationController,

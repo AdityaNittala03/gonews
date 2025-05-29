@@ -52,7 +52,7 @@ class _PrivacyPolicyScreenState extends ConsumerState<PrivacyPolicyScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.backgroundLight,
+      backgroundColor: AppColors.getBackgroundColor(context),
       appBar: _buildAppBar(),
       body: FadeTransition(
         opacity: _fadeAnimation,
