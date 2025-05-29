@@ -1,17 +1,17 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 )
 
 // Connect establishes a connection to PostgreSQL database
-func Connect(databaseURL string) (*sql.DB, error) {
-	db, err := sql.Open("postgres", databaseURL)
+func Connect(databaseURL string) (*sqlx.DB, error) {
+	db, err := sqlx.Connect("postgres", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
@@ -52,7 +52,7 @@ func ConnectRedis(redisURL string) *redis.Client {
 }
 
 // Migrate runs database migrations - simplified for now
-func Migrate(db *sql.DB) error {
+func Migrate(db *sqlx.DB) error {
 	migrations := []string{
 		// Users table with India-specific optimizations
 		`CREATE TABLE IF NOT EXISTS users (

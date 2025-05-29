@@ -30,22 +30,279 @@ func NewAuthHandler(authService *services.AuthService) *AuthHandler {
 // Register handles user registration
 // POST /api/v1/auth/register
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
-	var req models.CreateUserRequest
+	var req models.RegisterRequest
 
 	// Parse request body
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
 		})
 	}
 
 	// Validate request
 	if err := h.validator.Struct(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "validation_error",
-			"message": "Validation failed",
-			"details": h.formatValidationErrors(err),
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	// Clean email and name
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
+
+	// Register user
+	response, err := h.authService.Register(&req)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrUserAlreadyExists):
+			return c.Status(fiber.StatusConflict).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "User with this email already exists",
+			})
+		case strings.Contains(err.Error(), "password"):
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: err.Error(),
+			})
+		case strings.Contains(err.Error(), "email"):
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: err.Error(),
+			})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Failed to create user account",
+			})
+		}
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "User registered successfully",
+		Data:    response,
+	})
+}
+
+// Login handles user authentication
+// POST /api/v1/auth/login
+func (h *AuthHandler) Login(c *fiber.Ctx) error {
+	var req models.LoginRequest
+
+	// Parse request body
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	// Validate request
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	// Clean email
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Authenticate user
+	response, err := h.authService.Login(&req)
+	if err != nil {
+		switch err {
+		case services.ErrInvalidCredentials:
+			return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Invalid email or password",
+			})
+		case services.ErrUserNotActive:
+			return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "User account has been deactivated",
+			})
+		case services.ErrUserNotVerified:
+			return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Please verify your email address before logging in",
+			})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Authentication failed",
+			})
+		}
+	}
+
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Login successful",
+		Data:    response,
+	})
+}
+
+// RefreshToken handles token refresh
+// POST /api/v1/auth/refresh
+func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
+	var req models.RefreshTokenRequest
+
+	// Parse request body
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	// Validate request
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	// Refresh tokens
+	response, err := h.authService.RefreshToken(&req)
+	if err != nil {
+		switch err {
+		case services.ErrInvalidRefreshToken:
+			return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Invalid or expired refresh token",
+			})
+		case services.ErrUserNotActive:
+			return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "User account has been deactivated",
+			})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Failed to refresh token",
+			})
+		}
+	}
+
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Token refreshed successfully",
+		Data:    response,
+	})
+}
+
+// GetProfile returns the current user's profile
+// GET /api/v1/auth/me
+func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
+		})
+	}
+
+	user, err := h.authService.GetUserProfile(userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "User not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to fetch user profile",
+		})
+	}
+
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Data:    user,
+	})
+}
+
+// UpdateProfile updates the current user's profile
+// PUT /api/v1/auth/me
+func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
+		})
+	}
+
+	var req models.ProfileUpdateRequest
+
+	// Parse request body
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	// Clean name if provided
+	if req.Name != "" {
+		req.Name = strings.TrimSpace(req.Name)
+	}
+
+	// Update profile
+	user, err := h.authService.UpdateUserProfile(userID, &req)
+	if err != nil {
+		if errors.Is(err, repository.ErrUserNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "User not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to update user profile",
+		})
+	}
+
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Profile updated successfully",
+		Data:    user,
+	})
+}
+
+// ChangePassword handles password change
+// POST /api/v1/auth/change-password
+func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
+		})
+	}
+
+	var req models.ChangePasswordRequest
+
+	// Parse request body
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	// Validate request
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
 		})
 	}
 
@@ -54,27 +311,27 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	if err != nil {
 		switch err {
 		case services.ErrInvalidCredentials:
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error":   "invalid_current_password",
-				"message": "Current password is incorrect",
+			return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Current password is incorrect",
 			})
 		default:
 			if strings.Contains(err.Error(), "password") {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"error":   "weak_password",
-					"message": err.Error(),
+				return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+					Error:   true,
+					Message: err.Error(),
 				})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error":   "password_change_failed",
-				"message": "Failed to change password",
+			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Failed to change password",
 			})
 		}
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Password changed successfully",
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Password changed successfully",
 	})
 }
 
@@ -82,11 +339,11 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 // POST /api/v1/auth/logout
 func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	// Get token information
-	tokenID, ok := middleware.GetTokenIDFromContext(c)
+	_, ok := middleware.GetTokenIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
 		})
 	}
 
@@ -97,11 +354,9 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	// 2. Set expiration time
 	// 3. Check blacklist in JWT middleware
 
-	_ = tokenID // Use token ID for blacklisting
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Logged out successfully",
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Logged out successfully",
 	})
 }
 
@@ -110,23 +365,23 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 func (h *AuthHandler) GetUserStats(c *fiber.Ctx) error {
 	userID, ok := middleware.GetUserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
 		})
 	}
 
 	stats, err := h.authService.GetUserStats(userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "stats_fetch_failed",
-			"message": "Failed to fetch user statistics",
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to fetch user statistics",
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    stats,
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Data:    stats,
 	})
 }
 
@@ -135,9 +390,9 @@ func (h *AuthHandler) GetUserStats(c *fiber.Ctx) error {
 func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 	userID, ok := middleware.GetUserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
 		})
 	}
 
@@ -145,15 +400,15 @@ func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 	// For now, we'll just mark the user as verified
 	err := h.authService.VerifyEmail(userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "verification_failed",
-			"message": "Failed to verify email",
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to verify email",
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Email verified successfully",
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Email verified successfully",
 	})
 }
 
@@ -162,9 +417,9 @@ func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
 func (h *AuthHandler) DeactivateAccount(c *fiber.Ctx) error {
 	userID, ok := middleware.GetUserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User authentication required",
 		})
 	}
 
@@ -175,52 +430,40 @@ func (h *AuthHandler) DeactivateAccount(c *fiber.Ctx) error {
 
 	// Parse request body
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
 		})
 	}
 
 	// Validate request
 	if err := h.validator.Struct(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "validation_error",
-			"message": "Validation failed",
-			"details": h.formatValidationErrors(err),
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
 		})
 	}
 
 	if !req.Confirm {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "confirmation_required",
-			"message": "Account deactivation must be confirmed",
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Account deactivation must be confirmed",
 		})
 	}
-
-	// Verify password before deactivation
-	user, err := h.authService.GetUserProfile(userID)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "deactivation_failed",
-			"message": "Failed to deactivate account",
-		})
-	}
-
-	// Note: We can't verify password here because GetUserProfile returns PublicUser without password
-	// In a real implementation, you'd need a separate method to verify password
 
 	// Deactivate account
-	err = h.authService.DeactivateAccount(userID)
+	err := h.authService.DeactivateAccount(userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "deactivation_failed",
-			"message": "Failed to deactivate account",
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to deactivate account",
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Account deactivated successfully",
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Account deactivated successfully",
 	})
 }
 
@@ -233,25 +476,25 @@ func (h *AuthHandler) CheckPasswordStrength(c *fiber.Ctx) error {
 
 	// Parse request body
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
 		})
 	}
 
 	// Validate request
 	if err := h.validator.Struct(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "validation_error",
-			"message": "Validation failed",
-			"details": h.formatValidationErrors(err),
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
 		})
 	}
 
 	// Check password strength
 	score, err := h.authService.ValidatePasswordStrength(req.Password)
 
-	response := fiber.Map{
+	response := map[string]interface{}{
 		"score": score,
 		"valid": err == nil,
 	}
@@ -274,294 +517,37 @@ func (h *AuthHandler) CheckPasswordStrength(c *fiber.Ctx) error {
 		response["strength"] = "very_weak"
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    response,
+	return c.JSON(models.SuccessResponse{
+		Success: true,
+		Data:    response,
 	})
 }
 
 // formatValidationErrors formats validator errors into a more readable format
-func (h *AuthHandler) formatValidationErrors(err error) map[string]string {
-	errors := make(map[string]string)
+func (h *AuthHandler) formatValidationErrors(err error) string {
+	var errorMessages []string
 
 	if validationErrors, ok := err.(validator.ValidationErrors); ok {
 		for _, e := range validationErrors {
 			field := strings.ToLower(e.Field())
 			switch e.Tag() {
 			case "required":
-				errors[field] = field + " is required"
+				errorMessages = append(errorMessages, field+" is required")
 			case "email":
-				errors[field] = "Invalid email format"
+				errorMessages = append(errorMessages, "Invalid email format")
 			case "min":
-				errors[field] = field + " must be at least " + e.Param() + " characters"
+				errorMessages = append(errorMessages, field+" must be at least "+e.Param()+" characters")
 			case "max":
-				errors[field] = field + " must be at most " + e.Param() + " characters"
+				errorMessages = append(errorMessages, field+" must be at most "+e.Param()+" characters")
+			case "len":
+				errorMessages = append(errorMessages, field+" must be exactly "+e.Param()+" characters")
+			case "oneof":
+				errorMessages = append(errorMessages, field+" must be one of: "+e.Param())
 			default:
-				errors[field] = field + " is invalid"
+				errorMessages = append(errorMessages, field+" is invalid")
 			}
 		}
 	}
 
-	return errors
-}
-
-// Login handles user authentication
-// POST /api/v1/auth/login
-func (h *AuthHandler) Login(c *fiber.Ctx) error {
-	var req models.LoginRequest
-
-	// Parse request body
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
-		})
-	}
-
-	// Validate request
-	if err := h.validator.Struct(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "validation_error",
-			"message": "Validation failed",
-			"details": h.formatValidationErrors(err),
-		})
-	}
-
-	// Clean email
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-
-	// Authenticate user
-	response, err := h.authService.Login(&req)
-	if err != nil {
-		switch err {
-		case services.ErrInvalidCredentials:
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error":   "invalid_credentials",
-				"message": "Invalid email or password",
-			})
-		case services.ErrUserNotActive:
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error":   "account_deactivated",
-				"message": "User account has been deactivated",
-			})
-		case services.ErrUserNotVerified:
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error":   "account_not_verified",
-				"message": "Please verify your email address before logging in",
-			})
-		default:
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error":   "login_failed",
-				"message": "Authentication failed",
-			})
-		}
-	}
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Login successful",
-		"data":    response,
-	})
-}
-
-// RefreshToken handles token refresh
-// POST /api/v1/auth/refresh
-func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
-	var req models.RefreshTokenRequest
-
-	// Parse request body
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
-		})
-	}
-
-	// Validate request
-	if err := h.validator.Struct(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "validation_error",
-			"message": "Validation failed",
-			"details": h.formatValidationErrors(err),
-		})
-	}
-
-	// Refresh tokens
-	response, err := h.authService.RefreshToken(&req)
-	if err != nil {
-		switch err {
-		case services.ErrInvalidRefreshToken:
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error":   "invalid_refresh_token",
-				"message": "Invalid or expired refresh token",
-			})
-		case services.ErrUserNotActive:
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error":   "account_deactivated",
-				"message": "User account has been deactivated",
-			})
-		default:
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error":   "token_refresh_failed",
-				"message": "Failed to refresh token",
-			})
-		}
-	}
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Token refreshed successfully",
-		"data":    response,
-	})
-}
-
-// GetProfile returns the current user's profile
-// GET /api/v1/auth/me
-func (h *AuthHandler) GetProfile(c *fiber.Ctx) error {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
-		})
-	}
-
-	user, err := h.authService.GetUserProfile(userID)
-	if err != nil {
-		if errors.Is(err, repository.ErrUserNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error":   "user_not_found",
-				"message": "User not found",
-			})
-		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "profile_fetch_failed",
-			"message": "Failed to fetch user profile",
-		})
-	}
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    user,
-	})
-}
-
-// UpdateProfile updates the current user's profile
-// PUT /api/v1/auth/me
-func (h *AuthHandler) UpdateProfile(c *fiber.Ctx) error {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
-		})
-	}
-
-	var req models.UpdateUserRequest
-
-	// Parse request body
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
-		})
-	}
-
-	// Clean name if provided
-	if req.Name != nil {
-		cleaned := strings.TrimSpace(*req.Name)
-		req.Name = &cleaned
-	}
-
-	// Update profile
-	user, err := h.authService.UpdateUserProfile(userID, &req)
-	if err != nil {
-		if errors.Is(err, repository.ErrUserNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error":   "user_not_found",
-				"message": "User not found",
-			})
-		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error":   "profile_update_failed",
-			"message": "Failed to update user profile",
-		})
-	}
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Profile updated successfully",
-		"data":    user,
-	})
-}
-
-// ChangePassword handles password change
-// POST /api/v1/auth/change-password
-func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error":   "unauthorized",
-			"message": "User authentication required",
-		})
-	}
-
-	var req struct {
-		CurrentPassword string `json:"current_password" validate:"required"`
-		NewPassword     string `json:"new_password" validate:"required,min=8"`
-	}
-
-	// Parse request body
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "invalid_request",
-			"message": "Invalid request body",
-		})
-	}
-
-	// Validate request
-	if err := h.validator.Struct(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error":   "validation_error",
-			"message": "Validation failed",
-			"details": h.formatValidationErrors(err),
-		})
-	}
-
-	// Clean email
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	req.Name = strings.TrimSpace(req.Name)
-
-	// Register user
-	response, err := h.authService.Register(&req)
-	if err != nil {
-		switch {
-		case errors.Is(err, repository.ErrUserAlreadyExists):
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-				"error":   "user_exists",
-				"message": "User with this email already exists",
-			})
-		case strings.Contains(err.Error(), "password"):
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error":   "weak_password",
-				"message": err.Error(),
-			})
-		case strings.Contains(err.Error(), "email"):
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error":   "invalid_email",
-				"message": err.Error(),
-			})
-		default:
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error":   "registration_failed",
-				"message": "Failed to create user account",
-			})
-		}
-	}
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"success": true,
-		"message": "User registered successfully",
-		"data":    response,
-	})
+	return strings.Join(errorMessages, ", ")
 }

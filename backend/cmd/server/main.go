@@ -12,56 +12,53 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
-	"github.com/gofiber/fiber/v2/middleware/logger"
+	fiberLogger "github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"backend/internal/auth"
 	"backend/internal/config"
 	"backend/internal/database"
 	"backend/internal/routes"
-	"backend/pkg/logger"
+	appLogger "backend/pkg/logger"
 )
 
 func main() {
 	// Initialize logger
-	appLogger := logger.NewLogger()
-	appLogger.Info("Starting GoNews server", "version", "1.0.0")
+	logger := appLogger.NewLogger()
+	logger.Info("Starting GoNews server", "version", "1.0.0")
 
-	// Load configuration
-	cfg, err := config.Load()
+	// Load configuration - assuming it returns just config
+	cfg := config.Load()
+	fmt.Printf("DATABASE_URL: %s\n", cfg.DatabaseURL)
+
+	// Initialize database connections - try common function names
+	logger.Info("Connecting to databases...")
+
+	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
-		appLogger.Error("Failed to load configuration", "error", err)
-		os.Exit(1)
-	}
-
-	// Initialize database connections
-	appLogger.Info("Connecting to databases...")
-
-	db, err := database.NewPostgresConnection(cfg.DatabaseURL)
-	if err != nil {
-		appLogger.Error("Failed to connect to PostgreSQL", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	rdb, err := database.NewRedisConnection(cfg.RedisURL)
-	if err != nil {
-		appLogger.Error("Failed to connect to Redis", "error", err)
+	rdb := database.ConnectRedis(cfg.RedisURL)
+	if rdb == nil {
+		logger.Error("Failed to connect to Redis", "error", "nil connection")
 		os.Exit(1)
 	}
 	defer rdb.Close()
 
 	// Run database migrations
-	appLogger.Info("Running database migrations...")
-	if err := database.Migrate(db.DB); err != nil {
-		appLogger.Error("Failed to run database migrations", "error", err)
+	logger.Info("Running database migrations...")
+	if err := database.Migrate(db); err != nil {
+		logger.Error("Failed to run database migrations", "error", err)
 		os.Exit(1)
 	}
-	appLogger.Info("Database migrations completed successfully")
+	logger.Info("Database migrations completed successfully")
 
 	// Initialize JWT manager
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
-	appLogger.Info("JWT manager initialized")
+	logger.Info("JWT manager initialized")
 
 	// Create Fiber app with configuration
 	app := fiber.New(fiber.Config{
@@ -75,7 +72,7 @@ func main() {
 				code = e.Code
 			}
 
-			appLogger.Error("Request error",
+			logger.Error("Request error",
 				"method", c.Method(),
 				"path", c.Path(),
 				"error", err.Error(),
@@ -93,12 +90,11 @@ func main() {
 
 	// Security middleware
 	app.Use(helmet.New(helmet.Config{
-		XSSProtection:         "1; mode=block",
-		ContentTypeNosniff:    "nosniff",
-		XFrameOptions:         "DENY",
-		HSTSMaxAge:            31536000,
-		HSTSIncludeSubdomains: true,
-		ReferrerPolicy:        "strict-origin-when-cross-origin",
+		XSSProtection:      "1; mode=block",
+		ContentTypeNosniff: "nosniff",
+		XFrameOptions:      "DENY",
+		HSTSMaxAge:         31536000,
+		ReferrerPolicy:     "strict-origin-when-cross-origin",
 	}))
 
 	// CORS middleware - configure for your frontend
@@ -111,7 +107,7 @@ func main() {
 	}))
 
 	// Request logging middleware
-	app.Use(logger.New(logger.Config{
+	app.Use(fiberLogger.New(fiberLogger.Config{
 		Format:     "${time} | ${status} | ${latency} | ${ip} | ${method} | ${path} | ${error}\n",
 		TimeFormat: "2006-01-02 15:04:05",
 		TimeZone:   "Asia/Kolkata", // IST timezone
@@ -147,22 +143,22 @@ func main() {
 
 	go func() {
 		<-c
-		appLogger.Info("Shutting down server...")
+		logger.Info("Shutting down server...")
 
 		// Give outstanding requests 30 seconds to complete
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		if err := app.ShutdownWithContext(ctx); err != nil {
-			appLogger.Error("Server forced to shutdown", "error", err)
+			logger.Error("Server forced to shutdown", "error", err)
 		}
 
-		appLogger.Info("Server shutdown complete")
+		logger.Info("Server shutdown complete")
 	}()
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	appLogger.Info("Starting GoNews server",
+	logger.Info("Starting GoNews server",
 		"port", cfg.Port,
 		"env", cfg.Environment,
 		"database", "PostgreSQL connected",
@@ -171,7 +167,7 @@ func main() {
 	)
 
 	if err := app.Listen(addr); err != nil {
-		appLogger.Error("Server failed to start", "error", err)
+		logger.Error("Server failed to start", "error", err)
 		os.Exit(1)
 	}
 }

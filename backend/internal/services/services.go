@@ -1,10 +1,11 @@
 package services
 
 import (
+	"backend/internal/config"
 	"context"
 	"database/sql"
 
-	"github.com/AdityaNittala03/gonews/internal/config"
+	//"github.com/AdityaNittala03/gonews/backend/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

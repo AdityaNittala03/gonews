@@ -49,13 +49,13 @@ func (r *UserRepository) CreateUser(user *models.User) error {
 	user.UpdatedAt = now
 
 	// Set defaults if not provided
-	if user.Preferences == (models.UserPreferences{}) {
+	if isEmptyUserPreferences(user.Preferences) {
 		user.Preferences = models.DefaultUserPreferences()
 	}
-	if user.NotificationSettings == (models.NotificationSettings{}) {
+	if isEmptyNotificationSettings(user.NotificationSettings) {
 		user.NotificationSettings = models.DefaultNotificationSettings()
 	}
-	if user.PrivacySettings == (models.PrivacySettings{}) {
+	if isEmptyPrivacySettings(user.PrivacySettings) {
 		user.PrivacySettings = models.DefaultPrivacySettings()
 	}
 
@@ -141,6 +141,94 @@ func (r *UserRepository) UpdateUser(user *models.User) error {
 		WHERE id = :id AND is_active = true`
 
 	result, err := r.db.NamedExec(query, user)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+// UpdateLastLogin updates the user's last login timestamp
+func (r *UserRepository) UpdateLastLogin(userID uuid.UUID) error {
+	query := `
+		UPDATE users SET
+			last_login_at = NOW(),
+			updated_at = NOW()
+		WHERE id = $1 AND is_active = true`
+
+	result, err := r.db.Exec(query, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+// DeleteUser soft-deletes a user (sets is_active to false)
+func (r *UserRepository) DeleteUser(userID uuid.UUID) error {
+	query := `
+		UPDATE users SET
+			is_active = false,
+			updated_at = NOW()
+		WHERE id = $1`
+
+	result, err := r.db.Exec(query, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+// EmailExists checks if an email already exists
+func (r *UserRepository) EmailExists(email string) (bool, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM users WHERE email = $1 AND is_active = true`
+
+	err := r.db.Get(&count, query, email)
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// VerifyUserEmail marks a user's email as verified
+func (r *UserRepository) VerifyUserEmail(userID uuid.UUID) error {
+	query := `
+		UPDATE users SET
+			is_verified = true,
+			updated_at = NOW()
+		WHERE id = $1 AND is_active = true`
+
+	result, err := r.db.Exec(query, userID)
 	if err != nil {
 		return err
 	}
@@ -243,90 +331,42 @@ func (r *UserRepository) SearchUsers(query string, limit, offset int) ([]*models
 	return users, totalCount, nil
 }
 
-// UpdateLastLogin updates the user's last login timestamp
-func (r *UserRepository) UpdateLastLogin(userID uuid.UUID) error {
-	query := `
-		UPDATE users SET
-			last_login_at = NOW(),
-			updated_at = NOW()
-		WHERE id = $1 AND is_active = true`
+// Helper functions to check for empty structs
 
-	result, err := r.db.Exec(query, userID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrUserNotFound
-	}
-
-	return nil
+// isEmptyUserPreferences checks if UserPreferences is empty/zero value
+func isEmptyUserPreferences(up models.UserPreferences) bool {
+	return up.PreferredLanguage == "" &&
+		up.DefaultCategory == "" &&
+		up.ArticlesPerPage == 0 &&
+		len(up.PreferredSources) == 0 &&
+		len(up.BlockedSources) == 0 &&
+		len(up.PreferredRegions) == 0 &&
+		up.ContentFilterLevel == "" &&
+		!up.ShowImages &&
+		!up.AutoRefresh &&
+		up.RefreshIntervalMinutes == 0
 }
 
-// DeleteUser soft-deletes a user (sets is_active to false)
-func (r *UserRepository) DeleteUser(userID uuid.UUID) error {
-	query := `
-		UPDATE users SET
-			is_active = false,
-			updated_at = NOW()
-		WHERE id = $1`
-
-	result, err := r.db.Exec(query, userID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrUserNotFound
-	}
-
-	return nil
+// isEmptyNotificationSettings checks if NotificationSettings is empty/zero value
+func isEmptyNotificationSettings(ns models.NotificationSettings) bool {
+	return !ns.PushEnabled &&
+		!ns.BreakingNews &&
+		!ns.DailyDigest &&
+		ns.DigestTime == "" &&
+		len(ns.Categories) == 0 &&
+		!ns.EmailNotifications &&
+		!ns.WeeklyNewsletter &&
+		!ns.MarketAlerts &&
+		!ns.SportsUpdates &&
+		!ns.TechNews
 }
 
-// EmailExists checks if an email already exists
-func (r *UserRepository) EmailExists(email string) (bool, error) {
-	var count int
-	query := `SELECT COUNT(*) FROM users WHERE email = $1 AND is_active = true`
-
-	err := r.db.Get(&count, query, email)
-	if err != nil {
-		return false, err
-	}
-
-	return count > 0, nil
-}
-
-// VerifyUserEmail marks a user's email as verified
-func (r *UserRepository) VerifyUserEmail(userID uuid.UUID) error {
-	query := `
-		UPDATE users SET
-			is_verified = true,
-			updated_at = NOW()
-		WHERE id = $1 AND is_active = true`
-
-	result, err := r.db.Exec(query, userID)
-	if err != nil {
-		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-
-	if rowsAffected == 0 {
-		return ErrUserNotFound
-	}
-
-	return nil
+// isEmptyPrivacySettings checks if PrivacySettings is empty/zero value
+func isEmptyPrivacySettings(ps models.PrivacySettings) bool {
+	return ps.ProfileVisibility == "" &&
+		!ps.ReadingHistory &&
+		!ps.PersonalizedAds &&
+		!ps.DataSharing &&
+		!ps.AnalyticsTracking &&
+		!ps.LocationTracking
 }

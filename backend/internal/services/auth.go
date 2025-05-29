@@ -35,7 +35,7 @@ func NewAuthService(userRepo *repository.UserRepository, jwtManager *auth.JWTMan
 }
 
 // Register creates a new user account
-func (s *AuthService) Register(req *models.CreateUserRequest) (*models.AuthResponse, error) {
+func (s *AuthService) Register(req *models.RegisterRequest) (*models.AuthResponse, error) {
 	// Validate email format
 	if !auth.IsValidEmail(req.Email) {
 		return nil, errors.New("invalid email format")
@@ -190,7 +190,7 @@ func (s *AuthService) GetUserProfile(userID uuid.UUID) (*models.User, error) {
 }
 
 // UpdateUserProfile updates user profile information
-func (s *AuthService) UpdateUserProfile(userID uuid.UUID, req *models.UpdateUserRequest) (*models.User, error) {
+func (s *AuthService) UpdateUserProfile(userID uuid.UUID, req *models.ProfileUpdateRequest) (*models.User, error) {
 	// Get current user
 	user, err := s.userRepo.GetUserByID(userID)
 	if err != nil {
@@ -198,26 +198,20 @@ func (s *AuthService) UpdateUserProfile(userID uuid.UUID, req *models.UpdateUser
 	}
 
 	// Update fields if provided
-	if req.Name != nil {
-		user.Name = *req.Name
+	if req.Name != "" {
+		user.Name = req.Name
 	}
-	if req.AvatarURL != nil {
-		user.AvatarURL = req.AvatarURL
-	}
-	if req.Phone != nil {
-		user.Phone = req.Phone
+	if req.Phone != "" {
+		user.Phone = &req.Phone
 	}
 	if req.DateOfBirth != nil {
 		user.DateOfBirth = req.DateOfBirth
 	}
-	if req.Gender != nil {
-		user.Gender = req.Gender
+	if req.Gender != "" {
+		user.Gender = &req.Gender
 	}
-	if req.Location != nil {
-		user.Location = req.Location
-	}
-	if req.Preferences != nil {
-		user.Preferences = *req.Preferences
+	if req.Location != "" {
+		user.Location = &req.Location
 	}
 	if req.NotificationSettings != nil {
 		user.NotificationSettings = *req.NotificationSettings

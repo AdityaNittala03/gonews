@@ -133,7 +133,7 @@ func IsAuthenticated(c *fiber.Ctx) bool {
 func RequireVerifiedUser() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// This middleware should be used after AuthMiddleware
-		userID, ok := GetUserIDFromContext(c)
+		_, ok := GetUserIDFromContext(c)
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error":   "unauthorized",
@@ -154,7 +154,7 @@ func RequireVerifiedUser() fiber.Handler {
 func AdminMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// This middleware should be used after AuthMiddleware
-		userID, ok := GetUserIDFromContext(c)
+		_, ok := GetUserIDFromContext(c)
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error":   "unauthorized",
