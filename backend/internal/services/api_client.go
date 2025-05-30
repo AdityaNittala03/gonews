@@ -1,14 +1,14 @@
-// internal/services/api_client.go
-// GoNews Phase 2 - Checkpoint 3: API Client Service - RapidAPI Dominant Strategy
 package services
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,15 +16,17 @@ import (
 	"backend/internal/config"
 	"backend/internal/models"
 	"backend/pkg/logger"
+
+	"github.com/lib/pq"
 )
 
-// APIClient handles all external API communications
+// APIClient handles all external API communications with live integration
 type APIClient struct {
 	config     *config.Config
 	httpClient *http.Client
 	logger     *logger.Logger
 
-	// RapidAPI specific
+	// Legacy RapidAPI specific (keeping existing functionality)
 	rapidAPIKey       string
 	rapidAPIEndpoints []string
 	rapidAPIRateLimit int
@@ -78,9 +80,75 @@ type APIRequest struct {
 	SortBy   string               `json:"sort_by"`
 }
 
-// NewAPIClient creates a new API client with RapidAPI-dominant configuration
+// ===============================
+// LIVE API RESPONSE STRUCTURES
+// ===============================
+
+// NewsDataResponse represents NewsData.io API response
+type NewsDataResponse struct {
+	Status       string `json:"status"`
+	TotalResults int    `json:"totalResults"`
+	Results      []struct {
+		ArticleID   string   `json:"article_id"`
+		Title       string   `json:"title"`
+		Link        string   `json:"link"`
+		Keywords    []string `json:"keywords"`
+		Creator     []string `json:"creator"`
+		VideoURL    *string  `json:"video_url"`
+		Description string   `json:"description"`
+		Content     string   `json:"content"`
+		PubDate     string   `json:"pubDate"`
+		ImageURL    *string  `json:"image_url"`
+		SourceID    string   `json:"source_id"`
+		Category    []string `json:"category"`
+		Country     []string `json:"country"`
+		Language    string   `json:"language"`
+	} `json:"results"`
+	NextPage string `json:"nextPage"`
+}
+
+// GNewsResponse represents GNews API response
+type GNewsResponse struct {
+	TotalArticles int `json:"totalArticles"`
+	Articles      []struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Content     string `json:"content"`
+		URL         string `json:"url"`
+		Image       string `json:"image"`
+		PublishedAt string `json:"publishedAt"`
+		Source      struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"source"`
+	} `json:"articles"`
+}
+
+// MediastackResponse represents Mediastack API response
+type MediastackResponse struct {
+	Pagination struct {
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
+		Count  int `json:"count"`
+		Total  int `json:"total"`
+	} `json:"pagination"`
+	Data []struct {
+		Author      string    `json:"author"`
+		Title       string    `json:"title"`
+		Description string    `json:"description"`
+		URL         string    `json:"url"`
+		Source      string    `json:"source"`
+		Image       *string   `json:"image"`
+		Category    string    `json:"category"`
+		Language    string    `json:"language"`
+		Country     string    `json:"country"`
+		PublishedAt time.Time `json:"published_at"`
+	} `json:"data"`
+}
+
+// NewAPIClient creates a new API client with live integration support
 func NewAPIClient(cfg *config.Config, log *logger.Logger) *APIClient {
-	// Get RapidAPI configuration
+	// Get RapidAPI configuration (legacy support)
 	rapidAPIKey, _, _, endpoints := cfg.GetRapidAPIConfig()
 	rateLimit, _, _ := cfg.GetRapidAPIRateConfig()
 
@@ -105,10 +173,521 @@ func NewAPIClient(cfg *config.Config, log *logger.Logger) *APIClient {
 }
 
 // ===============================
-// PRIMARY: RAPIDAPI METHODS
+// LIVE API IMPLEMENTATIONS
 // ===============================
 
-// FetchNewsFromRapidAPI fetches news from RapidAPI endpoints (PRIMARY - 15,000/day)
+// FetchNewsFromNewsData fetches news from NewsData.io API (PRIMARY - 150/day)
+func (c *APIClient) FetchNewsFromNewsData(category, country string, limit int) ([]*models.Article, error) {
+	// Get API keys from simple configuration
+	apiKeys := c.config.GetSimpleAPIKeys()
+	apiKey := apiKeys["newsdata"]
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("NewsData.io API key not configured")
+	}
+
+	// Check rate limit
+	quotas := c.config.GetSimpleAPIQuotas()
+	if !c.checkRateLimit("newsdata", quotas["newsdata"], 24*time.Hour) {
+		return nil, fmt.Errorf("NewsData.io rate limit exceeded")
+	}
+
+	// Check circuit breaker
+	if !c.isCircuitBreakerClosed("newsdata") {
+		return nil, fmt.Errorf("NewsData.io circuit breaker is open")
+	}
+
+	baseURL := "https://newsdata.io/api/1/news"
+	params := url.Values{}
+	params.Add("apikey", apiKey)
+	params.Add("language", "en")
+	params.Add("size", strconv.Itoa(limit))
+
+	if category != "" && category != "general" {
+		params.Add("category", category)
+	}
+	if country != "" {
+		params.Add("country", country)
+	}
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+
+	c.logger.Info("Fetching from NewsData.io", map[string]interface{}{
+		"url":      fullURL,
+		"category": category,
+		"country":  country,
+	})
+
+	resp, err := c.httpClient.Get(fullURL)
+	if err != nil {
+		c.recordCircuitBreakerFailure("newsdata")
+		return nil, fmt.Errorf("failed to fetch from NewsData.io: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.incrementRequestCount("newsdata")
+
+	if resp.StatusCode != http.StatusOK {
+		c.recordCircuitBreakerFailure("newsdata")
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("NewsData.io API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var newsResponse NewsDataResponse
+	if err := json.NewDecoder(resp.Body).Decode(&newsResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode NewsData.io response: %w", err)
+	}
+
+	c.resetCircuitBreaker("newsdata")
+
+	articles := make([]*models.Article, 0, len(newsResponse.Results))
+	for _, item := range newsResponse.Results {
+		article := c.convertNewsDataToArticle(item)
+		articles = append(articles, article)
+	}
+
+	c.logger.Info("Successfully fetched from NewsData.io", map[string]interface{}{
+		"count":           len(articles),
+		"total_available": newsResponse.TotalResults,
+	})
+
+	return articles, nil
+}
+
+// FetchNewsFromGNews fetches news from GNews API (SECONDARY - 75/day)
+func (c *APIClient) FetchNewsFromGNews(category, country string, limit int) ([]*models.Article, error) {
+	// Get API keys from simple configuration
+	apiKeys := c.config.GetSimpleAPIKeys()
+	apiKey := apiKeys["gnews"]
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("GNews API key not configured")
+	}
+
+	// Check rate limit
+	quotas := c.config.GetSimpleAPIQuotas()
+	if !c.checkRateLimit("gnews", quotas["gnews"], 24*time.Hour) {
+		return nil, fmt.Errorf("GNews rate limit exceeded")
+	}
+
+	// Check circuit breaker
+	if !c.isCircuitBreakerClosed("gnews") {
+		return nil, fmt.Errorf("GNews circuit breaker is open")
+	}
+
+	baseURL := "https://gnews.io/api/v4/search"
+	params := url.Values{}
+	params.Add("token", apiKey)
+	params.Add("lang", "en")
+	params.Add("max", strconv.Itoa(limit))
+	params.Add("sortby", "publishedAt")
+
+	// Build search query
+	query := "latest news"
+	if category != "" && category != "general" {
+		query = category
+	}
+	if country == "in" {
+		query += " India"
+	}
+	params.Add("q", query)
+
+	if country != "" {
+		params.Add("country", country)
+	}
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+
+	c.logger.Info("Fetching from GNews", map[string]interface{}{
+		"url":     fullURL,
+		"query":   query,
+		"country": country,
+	})
+
+	resp, err := c.httpClient.Get(fullURL)
+	if err != nil {
+		c.recordCircuitBreakerFailure("gnews")
+		return nil, fmt.Errorf("failed to fetch from GNews: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.incrementRequestCount("gnews")
+
+	if resp.StatusCode != http.StatusOK {
+		c.recordCircuitBreakerFailure("gnews")
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GNews API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var newsResponse GNewsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&newsResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode GNews response: %w", err)
+	}
+
+	c.resetCircuitBreaker("gnews")
+
+	articles := make([]*models.Article, 0, len(newsResponse.Articles))
+	for _, item := range newsResponse.Articles {
+		article := c.convertGNewsToArticle(item, category)
+		articles = append(articles, article)
+	}
+
+	c.logger.Info("Successfully fetched from GNews", map[string]interface{}{
+		"count":           len(articles),
+		"total_available": newsResponse.TotalArticles,
+	})
+
+	return articles, nil
+}
+
+// FetchNewsFromMediastack fetches news from Mediastack API (BACKUP - 3/day)
+func (c *APIClient) FetchNewsFromMediastack(category, country string, limit int) ([]*models.Article, error) {
+	// Get API keys from simple configuration
+	apiKeys := c.config.GetSimpleAPIKeys()
+	apiKey := apiKeys["mediastack"]
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("Mediastack API key not configured")
+	}
+
+	// Check rate limit
+	quotas := c.config.GetSimpleAPIQuotas()
+	if !c.checkRateLimit("mediastack", quotas["mediastack"], 24*time.Hour) {
+		return nil, fmt.Errorf("Mediastack rate limit exceeded")
+	}
+
+	// Check circuit breaker
+	if !c.isCircuitBreakerClosed("mediastack") {
+		return nil, fmt.Errorf("Mediastack circuit breaker is open")
+	}
+
+	baseURL := "http://api.mediastack.com/v1/news"
+	params := url.Values{}
+	params.Add("access_key", apiKey)
+	params.Add("languages", "en")
+	params.Add("limit", strconv.Itoa(limit))
+	params.Add("sort", "published_desc")
+
+	if category != "" && category != "general" {
+		params.Add("categories", category)
+	}
+	if country != "" {
+		params.Add("countries", country)
+	}
+
+	fullURL := fmt.Sprintf("%s?%s", baseURL, params.Encode())
+
+	c.logger.Info("Fetching from Mediastack", map[string]interface{}{
+		"url":      fullURL,
+		"category": category,
+		"country":  country,
+	})
+
+	resp, err := c.httpClient.Get(fullURL)
+	if err != nil {
+		c.recordCircuitBreakerFailure("mediastack")
+		return nil, fmt.Errorf("failed to fetch from Mediastack: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.incrementRequestCount("mediastack")
+
+	if resp.StatusCode != http.StatusOK {
+		c.recordCircuitBreakerFailure("mediastack")
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Mediastack API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var newsResponse MediastackResponse
+	if err := json.NewDecoder(resp.Body).Decode(&newsResponse); err != nil {
+		return nil, fmt.Errorf("failed to decode Mediastack response: %w", err)
+	}
+
+	c.resetCircuitBreaker("mediastack")
+
+	articles := make([]*models.Article, 0, len(newsResponse.Data))
+	for _, item := range newsResponse.Data {
+		article := c.convertMediastackToArticle(item)
+		articles = append(articles, article)
+	}
+
+	c.logger.Info("Successfully fetched from Mediastack", map[string]interface{}{
+		"count":           len(articles),
+		"total_available": newsResponse.Pagination.Total,
+	})
+
+	return articles, nil
+}
+
+// ===============================
+// ARTICLE CONVERSION HELPERS
+// ===============================
+
+// convertNewsDataToArticle converts NewsData.io article to our Article model
+func (c *APIClient) convertNewsDataToArticle(item struct {
+	ArticleID   string   `json:"article_id"`
+	Title       string   `json:"title"`
+	Link        string   `json:"link"`
+	Keywords    []string `json:"keywords"`
+	Creator     []string `json:"creator"`
+	VideoURL    *string  `json:"video_url"`
+	Description string   `json:"description"`
+	Content     string   `json:"content"`
+	PubDate     string   `json:"pubDate"`
+	ImageURL    *string  `json:"image_url"`
+	SourceID    string   `json:"source_id"`
+	Category    []string `json:"category"`
+	Country     []string `json:"country"`
+	Language    string   `json:"language"`
+}) *models.Article {
+	publishedAt, _ := time.Parse("2006-01-02 15:04:05", item.PubDate)
+
+	var author *string
+	if len(item.Creator) > 0 {
+		authorStr := strings.Join(item.Creator, ", ")
+		author = &authorStr
+	}
+
+	var description *string
+	if item.Description != "" {
+		description = &item.Description
+	}
+
+	var content *string
+	if item.Content != "" {
+		content = &item.Content
+	}
+
+	var externalID *string
+	if item.ArticleID != "" {
+		externalID = &item.ArticleID
+	}
+
+	// Determine if content is India-related
+	isIndianContent := c.isIndiaRelatedContent(item.Title, item.Description, item.Keywords, item.Country)
+
+	// Calculate word count and reading time
+	wordCount := c.calculateWordCount(item.Content)
+	readingTime := c.calculateReadingTime(wordCount)
+
+	// Convert keywords to pq.StringArray
+	var tags pq.StringArray
+	if len(item.Keywords) > 0 {
+		tags = pq.StringArray(item.Keywords)
+	}
+
+	return &models.Article{
+		ExternalID:         externalID,
+		Title:              item.Title,
+		Description:        description,
+		Content:            content,
+		URL:                item.Link,
+		ImageURL:           item.ImageURL,
+		Source:             item.SourceID,
+		Author:             author,
+		PublishedAt:        publishedAt,
+		FetchedAt:          time.Now(),
+		IsIndianContent:    isIndianContent,
+		RelevanceScore:     c.calculateRelevanceScore(item.Title, item.Description, item.Keywords),
+		SentimentScore:     0.0, // TODO: Implement sentiment analysis
+		WordCount:          wordCount,
+		ReadingTimeMinutes: readingTime,
+		Tags:               tags,
+		IsActive:           true,
+		IsFeatured:         false,
+		ViewCount:          0,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+}
+
+// convertGNewsToArticle converts GNews article to our Article model
+func (c *APIClient) convertGNewsToArticle(item struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+	URL         string `json:"url"`
+	Image       string `json:"image"`
+	PublishedAt string `json:"publishedAt"`
+	Source      struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	} `json:"source"`
+}, category string) *models.Article {
+	publishedAt, _ := time.Parse(time.RFC3339, item.PublishedAt)
+
+	var imageURL *string
+	if item.Image != "" {
+		imageURL = &item.Image
+	}
+
+	var description *string
+	if item.Description != "" {
+		description = &item.Description
+	}
+
+	var content *string
+	if item.Content != "" {
+		content = &item.Content
+	}
+
+	// Determine if content is India-related
+	isIndianContent := c.isIndiaRelatedContent(item.Title, item.Description, nil, nil)
+
+	// Calculate word count and reading time
+	wordCount := c.calculateWordCount(item.Content)
+	readingTime := c.calculateReadingTime(wordCount)
+
+	// Create external ID from URL hash
+	externalID := strPtr(fmt.Sprintf("gnews_%s", c.hashURL(item.URL)))
+
+	return &models.Article{
+		ExternalID:         externalID,
+		Title:              item.Title,
+		Description:        description,
+		Content:            content,
+		URL:                item.URL,
+		ImageURL:           imageURL,
+		Source:             item.Source.Name,
+		PublishedAt:        publishedAt,
+		FetchedAt:          time.Now(),
+		IsIndianContent:    isIndianContent,
+		RelevanceScore:     c.calculateRelevanceScore(item.Title, item.Description, nil),
+		SentimentScore:     0.0, // TODO: Implement sentiment analysis
+		WordCount:          wordCount,
+		ReadingTimeMinutes: readingTime,
+		Tags:               pq.StringArray{}, // GNews doesn't provide tags
+		IsActive:           true,
+		IsFeatured:         false,
+		ViewCount:          0,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+}
+
+// convertMediastackToArticle converts Mediastack article to our Article model
+func (c *APIClient) convertMediastackToArticle(item struct {
+	Author      string    `json:"author"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	URL         string    `json:"url"`
+	Source      string    `json:"source"`
+	Image       *string   `json:"image"`
+	Category    string    `json:"category"`
+	Language    string    `json:"language"`
+	Country     string    `json:"country"`
+	PublishedAt time.Time `json:"published_at"`
+}) *models.Article {
+	var author *string
+	if item.Author != "" {
+		author = &item.Author
+	}
+
+	var description *string
+	if item.Description != "" {
+		description = &item.Description
+	}
+
+	// Determine if content is India-related
+	countries := []string{}
+	if item.Country != "" {
+		countries = append(countries, item.Country)
+	}
+	isIndianContent := c.isIndiaRelatedContent(item.Title, item.Description, nil, countries)
+
+	// Calculate word count and reading time from description (Mediastack doesn't provide full content)
+	wordCount := c.calculateWordCount(item.Description)
+	readingTime := c.calculateReadingTime(wordCount)
+
+	// Create external ID from URL hash
+	externalID := strPtr(fmt.Sprintf("mediastack_%s", c.hashURL(item.URL)))
+
+	return &models.Article{
+		ExternalID:         externalID,
+		Title:              item.Title,
+		Description:        description,
+		Content:            description, // Mediastack typically only provides description
+		URL:                item.URL,
+		ImageURL:           item.Image,
+		Source:             item.Source,
+		Author:             author,
+		PublishedAt:        item.PublishedAt,
+		FetchedAt:          time.Now(),
+		IsIndianContent:    isIndianContent,
+		RelevanceScore:     c.calculateRelevanceScore(item.Title, item.Description, nil),
+		SentimentScore:     0.0, // TODO: Implement sentiment analysis
+		WordCount:          wordCount,
+		ReadingTimeMinutes: readingTime,
+		Tags:               pq.StringArray{}, // Mediastack doesn't provide tags
+		IsActive:           true,
+		IsFeatured:         false,
+		ViewCount:          0,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+}
+
+// ===============================
+// INDIA-RELATED CONTENT DETECTION
+// ===============================
+
+// isIndiaRelatedContent determines if content is India-related
+func (c *APIClient) isIndiaRelatedContent(title, description string, keywords, countries []string) bool {
+	// Check countries
+	for _, country := range countries {
+		if strings.ToLower(country) == "in" || strings.ToLower(country) == "india" {
+			return true
+		}
+	}
+
+	// Check keywords
+	for _, keyword := range keywords {
+		if c.isIndianKeyword(keyword) {
+			return true
+		}
+	}
+
+	// Check title and description for Indian terms
+	content := strings.ToLower(title + " " + description)
+	indianTerms := []string{
+		"india", "indian", "delhi", "mumbai", "bangalore", "chennai", "kolkata", "hyderabad",
+		"rupee", "modi", "bjp", "congress", "bollywood", "cricket", "ipl", "bcci",
+		"sensex", "nifty", "rbi", "isro", "drdo", "aiims", "iit", "neet",
+		"karnataka", "maharashtra", "tamil nadu", "west bengal", "rajasthan", "gujarat",
+		"punjab", "haryana", "kerala", "odisha", "bihar", "jharkhand", "goa",
+	}
+
+	for _, term := range indianTerms {
+		if strings.Contains(content, term) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isIndianKeyword checks if a keyword is Indian
+func (c *APIClient) isIndianKeyword(keyword string) bool {
+	keyword = strings.ToLower(keyword)
+	indianKeywords := []string{
+		"india", "indian", "delhi", "mumbai", "bangalore", "chennai", "kolkata",
+		"bollywood", "cricket", "ipl", "rupee", "modi", "bjp", "congress",
+		"sensex", "nifty", "rbi", "isro", "karnataka", "maharashtra",
+	}
+
+	for _, ik := range indianKeywords {
+		if strings.Contains(keyword, ik) {
+			return true
+		}
+	}
+	return false
+}
+
+// ===============================
+// LEGACY RAPIDAPI METHODS (PRESERVED)
+// ===============================
+
+// FetchNewsFromRapidAPI fetches news from RapidAPI endpoints (LEGACY - preserved)
 func (c *APIClient) FetchNewsFromRapidAPI(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
 	// Check rate limit (900 requests/hour)
 	if !c.checkRateLimit("rapidapi", c.rapidAPIRateLimit, time.Hour) {
@@ -151,11 +730,11 @@ func (c *APIClient) FetchNewsFromRapidAPI(ctx context.Context, req APIRequest) (
 	c.incrementRequestCount("rapidapi")
 
 	// Log request details
-	c.logger.Info("RapidAPI request completed",
-		"endpoint", endpoint,
-		"status_code", resp.StatusCode,
-		"duration", time.Since(startTime),
-	)
+	c.logger.Info("RapidAPI request completed", map[string]interface{}{
+		"endpoint":    endpoint,
+		"status_code": resp.StatusCode,
+		"duration":    time.Since(startTime),
+	})
 
 	// Parse response
 	body, err := io.ReadAll(resp.Body)
@@ -180,12 +759,8 @@ func (c *APIClient) FetchNewsFromRapidAPI(ctx context.Context, req APIRequest) (
 	return &apiResponse, nil
 }
 
-// ===============================
-// SECONDARY: OTHER API METHODS
-// ===============================
-
-// FetchNewsFromNewsData fetches news from NewsData.io (SECONDARY - 150/day)
-func (c *APIClient) FetchNewsFromNewsData(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
+// FetchNewsFromNewsData (legacy method for compatibility)
+func (c *APIClient) FetchNewsFromNewsDataLegacy(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
 	// Check rate limit and circuit breaker
 	if !c.checkRateLimit("newsdata", c.config.NewsDataDailyLimit, 24*time.Hour) {
 		return nil, fmt.Errorf("NewsData.io rate limit exceeded")
@@ -218,8 +793,8 @@ func (c *APIClient) FetchNewsFromNewsData(ctx context.Context, req APIRequest) (
 	return c.executeAPIRequest(ctx, "newsdata", requestURL, nil)
 }
 
-// FetchNewsFromGNews fetches news from GNews (TERTIARY - 75/day)
-func (c *APIClient) FetchNewsFromGNews(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
+// FetchNewsFromGNewsLegacy (legacy method for compatibility)
+func (c *APIClient) FetchNewsFromGNewsLegacy(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
 	// Check rate limit and circuit breaker
 	if !c.checkRateLimit("gnews", c.config.GNewsDailyLimit, 24*time.Hour) {
 		return nil, fmt.Errorf("GNews rate limit exceeded")
@@ -252,8 +827,8 @@ func (c *APIClient) FetchNewsFromGNews(ctx context.Context, req APIRequest) (*Ne
 	return c.executeAPIRequest(ctx, "gnews", requestURL, nil)
 }
 
-// FetchNewsFromMediastack fetches news from Mediastack (EMERGENCY - 12/day)
-func (c *APIClient) FetchNewsFromMediastack(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
+// FetchNewsFromMediastackLegacy (legacy method for compatibility)
+func (c *APIClient) FetchNewsFromMediastackLegacy(ctx context.Context, req APIRequest) (*NewsAPIResponse, error) {
 	// Check rate limit and circuit breaker
 	if !c.checkRateLimit("mediastack", c.config.MediastackDailyLimit, 24*time.Hour) {
 		return nil, fmt.Errorf("Mediastack rate limit exceeded")
@@ -287,7 +862,7 @@ func (c *APIClient) FetchNewsFromMediastack(ctx context.Context, req APIRequest)
 }
 
 // ===============================
-// INTELLIGENT API ORCHESTRATION
+// INTELLIGENT API ORCHESTRATION (PRESERVED)
 // ===============================
 
 // FetchNewsIntelligent uses intelligent API selection with fallback chain
@@ -296,41 +871,57 @@ func (c *APIClient) FetchNewsIntelligent(ctx context.Context, req APIRequest) (*
 
 	// 1. Try RapidAPI first (PRIMARY - 15,000/day)
 	if resp, err := c.FetchNewsFromRapidAPI(ctx, req); err == nil {
-		c.logger.Info("Successfully fetched from RapidAPI", "articles", len(resp.Articles))
+		c.logger.Info("Successfully fetched from RapidAPI", map[string]interface{}{
+			"articles": len(resp.Articles),
+		})
 		return resp, nil
 	} else {
-		c.logger.Warn("RapidAPI failed, trying fallback", "error", err)
+		c.logger.Warn("RapidAPI failed, trying fallback", map[string]interface{}{
+			"error": err,
+		})
 	}
 
 	// 2. Fallback to NewsData.io (SECONDARY - 150/day)
-	if resp, err := c.FetchNewsFromNewsData(ctx, req); err == nil {
-		c.logger.Info("Successfully fetched from NewsData.io", "articles", len(resp.Articles))
+	if resp, err := c.FetchNewsFromNewsDataLegacy(ctx, req); err == nil {
+		c.logger.Info("Successfully fetched from NewsData.io", map[string]interface{}{
+			"articles": len(resp.Articles),
+		})
 		return resp, nil
 	} else {
-		c.logger.Warn("NewsData.io failed, trying next fallback", "error", err)
+		c.logger.Warn("NewsData.io failed, trying next fallback", map[string]interface{}{
+			"error": err,
+		})
 	}
 
 	// 3. Fallback to GNews (TERTIARY - 75/day)
-	if resp, err := c.FetchNewsFromGNews(ctx, req); err == nil {
-		c.logger.Info("Successfully fetched from GNews", "articles", len(resp.Articles))
+	if resp, err := c.FetchNewsFromGNewsLegacy(ctx, req); err == nil {
+		c.logger.Info("Successfully fetched from GNews", map[string]interface{}{
+			"articles": len(resp.Articles),
+		})
 		return resp, nil
 	} else {
-		c.logger.Warn("GNews failed, trying final fallback", "error", err)
+		c.logger.Warn("GNews failed, trying final fallback", map[string]interface{}{
+			"error": err,
+		})
 	}
 
 	// 4. Final fallback to Mediastack (EMERGENCY - 12/day)
-	if resp, err := c.FetchNewsFromMediastack(ctx, req); err == nil {
-		c.logger.Info("Successfully fetched from Mediastack", "articles", len(resp.Articles))
+	if resp, err := c.FetchNewsFromMediastackLegacy(ctx, req); err == nil {
+		c.logger.Info("Successfully fetched from Mediastack", map[string]interface{}{
+			"articles": len(resp.Articles),
+		})
 		return resp, nil
 	} else {
-		c.logger.Error("All API sources failed", "error", err)
+		c.logger.Error("All API sources failed", map[string]interface{}{
+			"error": err,
+		})
 	}
 
 	return nil, fmt.Errorf("all API sources exhausted or failed")
 }
 
 // ===============================
-// RAPIDAPI HELPER METHODS
+// RAPIDAPI HELPER METHODS (PRESERVED)
 // ===============================
 
 // getNextRapidAPIEndpoint returns the next endpoint using round-robin
@@ -427,7 +1018,7 @@ func (c *APIClient) addRapidAPIHeaders(req *http.Request, endpoint string) {
 }
 
 // ===============================
-// RATE LIMITING & CIRCUIT BREAKER
+// RATE LIMITING & CIRCUIT BREAKER (PRESERVED)
 // ===============================
 
 // checkRateLimit checks if the API source is within rate limits
@@ -520,7 +1111,10 @@ func (c *APIClient) recordCircuitBreakerFailure(source string) {
 
 	if cb.FailureCount >= cb.Threshold {
 		cb.State = "open"
-		c.logger.Warn("Circuit breaker opened", "source", source, "failures", cb.FailureCount)
+		c.logger.Warn("Circuit breaker opened", map[string]interface{}{
+			"source":   source,
+			"failures": cb.FailureCount,
+		})
 	}
 }
 
@@ -537,12 +1131,14 @@ func (c *APIClient) resetCircuitBreaker(source string) {
 	if cb.State == "half-open" {
 		cb.State = "closed"
 		cb.FailureCount = 0
-		c.logger.Info("Circuit breaker closed", "source", source)
+		c.logger.Info("Circuit breaker closed", map[string]interface{}{
+			"source": source,
+		})
 	}
 }
 
 // ===============================
-// GENERIC REQUEST EXECUTOR
+// GENERIC REQUEST EXECUTOR (PRESERVED)
 // ===============================
 
 // executeAPIRequest executes a generic API request with error handling
@@ -573,10 +1169,10 @@ func (c *APIClient) executeAPIRequest(ctx context.Context, source, requestURL st
 	c.incrementRequestCount(source)
 
 	// Log request details
-	c.logger.Info(fmt.Sprintf("%s request completed", source),
-		"status_code", resp.StatusCode,
-		"duration", time.Since(startTime),
-	)
+	c.logger.Info(fmt.Sprintf("%s request completed", source), map[string]interface{}{
+		"status_code": resp.StatusCode,
+		"duration":    time.Since(startTime),
+	})
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)
@@ -602,7 +1198,7 @@ func (c *APIClient) executeAPIRequest(ctx context.Context, source, requestURL st
 }
 
 // ===============================
-// UTILITY METHODS
+// UTILITY METHODS (PRESERVED)
 // ===============================
 
 // GetAPIStatus returns the current status of all API sources
@@ -647,12 +1243,8 @@ func (c *APIClient) GetRemainingQuota() map[string]int {
 	c.rateMutex.RLock()
 	defer c.rateMutex.RUnlock()
 
-	quotas := map[string]int{
-		"rapidapi":   c.rapidAPIRateLimit,
-		"newsdata":   c.config.NewsDataDailyLimit,
-		"gnews":      c.config.GNewsDailyLimit,
-		"mediastack": c.config.MediastackDailyLimit,
-	}
+	// Use simple quotas from config
+	quotas := c.config.GetSimpleAPIQuotas()
 
 	remaining := make(map[string]int)
 
@@ -660,6 +1252,9 @@ func (c *APIClient) GetRemainingQuota() map[string]int {
 		if counter, exists := c.requestCounts[source]; exists {
 			counter.Mutex.Lock()
 			remaining[source] = limit - counter.Count
+			if remaining[source] < 0 {
+				remaining[source] = 0
+			}
 			counter.Mutex.Unlock()
 		} else {
 			remaining[source] = limit
@@ -667,6 +1262,77 @@ func (c *APIClient) GetRemainingQuota() map[string]int {
 	}
 
 	return remaining
+}
+
+// ===============================
+// HELPER FUNCTIONS
+// ===============================
+
+// strPtr creates a string pointer
+func strPtr(s string) *string {
+	return &s
+}
+
+// calculateWordCount calculates word count from text content
+func (c *APIClient) calculateWordCount(content string) int {
+	if content == "" {
+		return 0
+	}
+	words := strings.Fields(strings.TrimSpace(content))
+	return len(words)
+}
+
+// calculateReadingTime calculates reading time in minutes (assuming 200 words per minute)
+func (c *APIClient) calculateReadingTime(wordCount int) int {
+	if wordCount == 0 {
+		return 1 // Minimum 1 minute
+	}
+	readingTime := wordCount / 200 // 200 words per minute average
+	if readingTime == 0 {
+		return 1 // Minimum 1 minute
+	}
+	return readingTime
+}
+
+// calculateRelevanceScore calculates relevance score based on title, description, and keywords
+func (c *APIClient) calculateRelevanceScore(title, description string, keywords []string) float64 {
+	score := 0.0
+
+	// Base score for having content
+	if title != "" {
+		score += 0.3
+	}
+	if description != "" {
+		score += 0.2
+	}
+
+	// Bonus for Indian content
+	content := strings.ToLower(title + " " + description)
+	indianTerms := []string{"india", "indian", "delhi", "mumbai", "bangalore", "modi", "rupee", "cricket", "bollywood"}
+	for _, term := range indianTerms {
+		if strings.Contains(content, term) {
+			score += 0.1
+			break // Only add bonus once
+		}
+	}
+
+	// Bonus for having keywords
+	if len(keywords) > 0 {
+		score += 0.1
+	}
+
+	// Cap at 1.0
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	return score
+}
+
+// hashURL creates a hash from URL for external ID
+func (c *APIClient) hashURL(url string) string {
+	hash := md5.Sum([]byte(url))
+	return fmt.Sprintf("%x", hash)[:8] // Use first 8 characters
 }
 
 // Close cleanly shuts down the API client

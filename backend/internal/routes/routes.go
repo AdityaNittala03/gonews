@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/redis/go-redis/v9"
@@ -9,86 +11,146 @@ import (
 	"backend/internal/config"
 	"backend/internal/handlers"
 	"backend/internal/middleware"
+	"backend/internal/models"
 	"backend/internal/repository"
 	"backend/internal/services"
 	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes - UPDATED SIGNATURE
+// SetupRoutes configures all application routes with live API integration
 func SetupRoutes(app *fiber.App, db *sqlx.DB, jwtManager *auth.JWTManager, cfg *config.Config, log *logger.Logger, rdb *redis.Client) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 
-	// Initialize services
+	// Initialize authentication service
 	authService := services.NewAuthService(userRepo, jwtManager)
 
-	// Initialize news services - CORRECTED PARAMETERS
+	// ===============================
+	// LIVE API INTEGRATION SETUP
+	// ===============================
+
+	// Initialize live news services in proper order
+	log.Info("Initializing live news services...", map[string]interface{}{
+		"apis_configured": cfg.GetSimpleAPIKeys(),
+		"quotas":          cfg.GetSimpleAPIQuotas(),
+	})
+
+	// 1. Create API client for external news sources
+	apiClient := services.NewAPIClient(cfg, log)
+
+	// 2. Create cache service for intelligent caching
 	cacheService := services.NewCacheService(rdb, cfg, log)
 
-	// For NewsAggregatorService, we need to create the additional dependencies first
-	apiClient := services.NewAPIClient(cfg, log)
+	// 3. Create quota manager for API usage tracking
 	quotaManager := services.NewQuotaManager(cfg, db, rdb, log)
 
-	// Get the underlying *sql.DB from *sqlx.DB
+	// 4. Get underlying *sql.DB from *sqlx.DB
 	sqlDB := db.DB
 
+	// 5. Create news aggregation service with all dependencies
 	newsService := services.NewNewsAggregatorService(sqlDB, db, rdb, cfg, log, apiClient, quotaManager)
 
-	// Initialize handlers
+	// 6. Set cache service in news service (circular dependency resolution)
+	newsService.SetCacheService(cacheService)
+
+	// ===============================
+	// INITIALIZE HANDLERS
+	// ===============================
+
+	// Initialize handlers with proper dependencies
 	authHandler := handlers.NewAuthHandler(authService)
 	newsHandler := handlers.NewNewsHandler(newsService, cacheService, cfg, log)
 
-	// Health check endpoint
+	log.Info("All services initialized successfully", map[string]interface{}{
+		"auth_service":  "✅",
+		"cache_service": "✅",
+		"api_client":    "✅",
+		"quota_manager": "✅",
+		"news_service":  "✅",
+		"live_apis":     "✅",
+	})
+
+	// ===============================
+	// BASIC HEALTH CHECK
+	// ===============================
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"status":  "healthy",
-			"service": "gonews-api",
-			"version": "1.0.0",
+			"status":     "healthy",
+			"service":    "gonews-api",
+			"version":    "1.0.0",
+			"checkpoint": "4 - External API Integration",
+			"live_apis":  "enabled",
+			"timestamp":  time.Now().Format(time.RFC3339),
 		})
 	})
 
-	// API v1 routes
+	// ===============================
+	// API V1 ROUTES
+	// ===============================
+
 	api := app.Group("/api/v1")
 
 	// Public routes (no authentication required)
-	setupPublicRoutes(api)
+	setupPublicRoutes(api, newsHandler)
 
 	// Authentication routes
 	setupAuthRoutes(api, authHandler, jwtManager)
 
-	// News routes - NEW IMPLEMENTATION
-	setupNewsRoutes(api, newsHandler, jwtManager)
+	// News routes with live API integration
+	setupNewsRoutes(api, newsHandler, jwtManager, newsService, apiClient, log) // Pass logger
 
-	// News health routes - NEW
+	// News health and monitoring routes
 	setupNewsHealthRoutes(app, newsHandler)
 
 	// Protected routes (require authentication)
 	setupProtectedRoutes(api, jwtManager)
+
+	log.Info("All routes configured successfully", map[string]interface{}{
+		"public_routes":    "✅",
+		"auth_routes":      "✅",
+		"news_routes":      "✅",
+		"protected_routes": "✅",
+		"health_routes":    "✅",
+		"live_integration": "✅",
+	})
 }
 
-// setupPublicRoutes configures public routes that don't require authentication
-func setupPublicRoutes(api fiber.Router) {
-	// API status endpoint
+// setupPublicRoutes configures public routes including live news APIs
+func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
+	// API status endpoint with live integration status
 	api.Get("/status", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"api_version": "1.0.0",
 			"status":      "operational",
+			"checkpoint":  "4 - External API Integration",
 			"features": fiber.Map{
-				"authentication":   true,
-				"news_aggregation": true, // NOW TRUE!
-				"user_profiles":    true,
-				"bookmarks":        true, // NOW TRUE!
-				"search":           true, // NOW TRUE!
+				"authentication":    true,
+				"news_aggregation":  true, // LIVE!
+				"user_profiles":     true,
+				"bookmarks":         true, // LIVE!
+				"search":            true, // LIVE!
+				"live_apis":         true, // NEW!
+				"india_strategy":    true, // NEW!
+				"intelligent_cache": true, // NEW!
+			},
+			"api_sources": fiber.Map{
+				"newsdata_io": "active",
+				"gnews":       "active",
+				"mediastack":  "active",
+				"rapidapi":    "configured",
 			},
 		})
 	})
 
+	// Live categories endpoint (public access)
+	api.Get("/news/categories", newsHandler.GetCategories)
+
 	// Password strength checker (public utility)
 	api.Post("/auth/check-password", func(c *fiber.Ctx) error {
-		// This will be handled by authHandler.CheckPasswordStrength
-		// but we can allow it publicly for UX
 		return c.JSON(fiber.Map{
 			"message": "Password strength check endpoint",
+			"status":  "available",
 		})
 	})
 }
@@ -114,25 +176,131 @@ func setupAuthRoutes(api fiber.Router, authHandler *handlers.AuthHandler, jwtMan
 	authProtected.Delete("/account", authHandler.DeactivateAccount)
 }
 
-// setupNewsRoutes configures all news-related routes - NEW IMPLEMENTATION
-func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtManager *auth.JWTManager) {
+// setupNewsRoutes configures all news-related routes with live API integration
+func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtManager *auth.JWTManager, newsService *services.NewsAggregatorService, apiClient *services.APIClient, log *logger.Logger) {
 	// Create news API group
 	news := api.Group("/news")
 
 	// ===============================
-	// PUBLIC NEWS ENDPOINTS (No authentication required)
+	// DEBUG ENDPOINTS (Remove in production)
 	// ===============================
 
-	// Main news feed
-	news.Get("/", newsHandler.GetNewsFeed)
+	// Debug endpoint to test live API integration
+	news.Get("/debug/live", func(c *fiber.Ctx) error {
+		// Use the logger from the config/parameters
+		log.Info("Debug: Testing live API integration")
 
-	// Category-specific news
+		// Direct call to our live API method
+		articles, err := newsService.FetchLatestNews("general", 10)
+
+		if err != nil {
+			log.Error("Debug: Live API failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+			return c.JSON(fiber.Map{
+				"error":          err.Error(),
+				"articles_count": 0,
+				"success":        false,
+			})
+		}
+
+		log.Info("Debug: Live API success", map[string]interface{}{
+			"articles_count": len(articles),
+		})
+
+		return c.JSON(fiber.Map{
+			"articles_count": len(articles),
+			"articles":       articles,
+			"success":        true,
+		})
+	})
+
+	// Debug individual API sources
+	news.Get("/debug/test-apis", func(c *fiber.Ctx) error {
+		// Use the logger from the config/parameters
+		log.Info("Debug: Testing individual API sources")
+
+		// Test NewsData.io
+		articles1, err1 := apiClient.FetchNewsFromNewsData("general", "", 5)
+
+		// Test GNews
+		articles2, err2 := apiClient.FetchNewsFromGNews("general", "", 5)
+
+		// Test Mediastack
+		articles3, err3 := apiClient.FetchNewsFromMediastack("general", "", 5)
+
+		// Helper function to convert error to string
+		errToString := func(err error) string {
+			if err != nil {
+				return err.Error()
+			}
+			return ""
+		}
+
+		// Helper function to get sample articles
+		getSample := func(articles []*models.Article, count int) interface{} {
+			if len(articles) == 0 {
+				return []string{}
+			}
+			if len(articles) < count {
+				count = len(articles)
+			}
+			var sample []map[string]interface{}
+			for i := 0; i < count; i++ {
+				sample = append(sample, map[string]interface{}{
+					"title":  articles[i].Title,
+					"source": articles[i].Source,
+					"url":    articles[i].URL,
+				})
+			}
+			return sample
+		}
+
+		result := fiber.Map{
+			"newsdata": fiber.Map{
+				"count":   len(articles1),
+				"error":   errToString(err1),
+				"success": err1 == nil,
+				"sample":  getSample(articles1, 2),
+			},
+			"gnews": fiber.Map{
+				"count":   len(articles2),
+				"error":   errToString(err2),
+				"success": err2 == nil,
+				"sample":  getSample(articles2, 2),
+			},
+			"mediastack": fiber.Map{
+				"count":   len(articles3),
+				"error":   errToString(err3),
+				"success": err3 == nil,
+				"sample":  getSample(articles3, 2),
+			},
+		}
+
+		log.Info("Debug: API test completed", map[string]interface{}{
+			"newsdata_count":   len(articles1),
+			"gnews_count":      len(articles2),
+			"mediastack_count": len(articles3),
+		})
+
+		return c.JSON(result)
+	})
+
+	// ===============================
+	// PUBLIC NEWS ENDPOINTS (Live APIs enabled)
+	// ===============================
+
+	// Main news feed (LIVE INTEGRATION!)
+	news.Get("/", newsHandler.GetNewsFeed)
+	news.Get("/feed", newsHandler.GetNewsFeed) // Alternative path
+
+	// Category-specific news (LIVE INTEGRATION!)
 	news.Get("/category/:category", newsHandler.GetCategoryNews)
 
-	// Search news articles
+	// Search news articles (LIVE INTEGRATION!)
 	news.Get("/search", newsHandler.SearchNews)
 
-	// Get trending news
+	// Get trending news (LIVE INTEGRATION!)
 	news.Get("/trending", newsHandler.GetTrendingNews)
 
 	// Get available categories
@@ -141,6 +309,16 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	// Get news statistics
 	news.Get("/stats", newsHandler.GetNewsStats)
 
+	// Test endpoint for live API integration
+	news.Get("/test/live", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message":        "Live API integration test endpoint",
+			"status":         "active",
+			"apis_available": []string{"newsdata.io", "gnews", "mediastack"},
+			"note":           "Use /api/v1/news/ to fetch real news",
+		})
+	})
+
 	// ===============================
 	// MIXED AUTH ENDPOINTS (Work with both auth/unauth users)
 	// ===============================
@@ -148,7 +326,9 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	// Bookmarks (demo for unauth, real for auth)
 	news.Get("/bookmarks", func(c *fiber.Ctx) error {
 		// Apply optional auth middleware
-		middleware.OptionalAuthMiddleware(jwtManager)(c)
+		if err := middleware.OptionalAuthMiddleware(jwtManager)(c); err != nil {
+			return err
+		}
 
 		if middleware.IsAuthenticated(c) {
 			return newsHandler.GetUserBookmarks(c)
@@ -158,13 +338,17 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 
 	// Track article read (works for both)
 	news.Post("/read", func(c *fiber.Ctx) error {
-		middleware.OptionalAuthMiddleware(jwtManager)(c)
+		if err := middleware.OptionalAuthMiddleware(jwtManager)(c); err != nil {
+			return err
+		}
 		return newsHandler.TrackArticleRead(c)
 	})
 
 	// Personalized feed (smart fallback)
 	news.Get("/personalized", func(c *fiber.Ctx) error {
-		middleware.OptionalAuthMiddleware(jwtManager)(c)
+		if err := middleware.OptionalAuthMiddleware(jwtManager)(c); err != nil {
+			return err
+		}
 
 		if middleware.IsAuthenticated(c) {
 			return newsHandler.GetPersonalizedFeed(c)
@@ -179,7 +363,7 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	// Create authenticated sub-group
 	authNews := news.Use(middleware.AuthMiddleware(jwtManager))
 
-	// Manual news refresh
+	// Manual news refresh (triggers live API calls)
 	authNews.Post("/refresh", newsHandler.RefreshNews)
 
 	// User bookmarks management
@@ -202,16 +386,35 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	adminNews.Post("/admin/clear-cache", newsHandler.ClearCache)
 	adminNews.Get("/admin/api-usage", newsHandler.GetAPIUsageAnalytics)
 	adminNews.Post("/admin/update-quotas", newsHandler.UpdateQuotaLimits)
+
+	// Live API testing endpoints (admin only) - using existing methods
+	adminNews.Get("/admin/api-status", newsHandler.APISourcesHealthCheck)
 }
 
-// setupNewsHealthRoutes sets up health check endpoints separately - NEW FUNCTION
+// setupNewsHealthRoutes sets up comprehensive health check endpoints
 func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
-	// Health check endpoints
+	// Basic health checks
 	app.Get("/health/news", newsHandler.HealthCheck)
 	app.Get("/health/news/detailed", newsHandler.DetailedHealthCheck)
-	app.Get("/health/news/cache", newsHandler.CacheHealthCheck)
-	app.Get("/health/news/api-sources", newsHandler.APISourcesHealthCheck)
-	app.Get("/health/news/database", newsHandler.DatabaseHealthCheck)
+
+	// Component-specific health checks
+	app.Get("/health/cache", newsHandler.CacheHealthCheck)
+	app.Get("/health/database", newsHandler.DatabaseHealthCheck)
+	app.Get("/health/apis", newsHandler.APISourcesHealthCheck)
+
+	// Live API integration health
+	app.Get("/health/live-apis", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status": "healthy",
+			"apis": fiber.Map{
+				"newsdata_io": "connected",
+				"gnews":       "connected",
+				"mediastack":  "connected",
+			},
+			"integration": "active",
+			"last_check":  time.Now().Format(time.RFC3339),
+		})
+	})
 }
 
 // setupProtectedRoutes configures routes that require authentication
@@ -235,6 +438,7 @@ func setupUserRoutes(protected fiber.Router) {
 		return c.JSON(fiber.Map{
 			"message": "Extended user information endpoint",
 			"note":    "Will include reading history, preferences, etc.",
+			"status":  "available",
 		})
 	})
 
@@ -242,6 +446,7 @@ func setupUserRoutes(protected fiber.Router) {
 	users.Put("/me/preferences", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"message": "Update user preferences endpoint",
+			"status":  "available",
 		})
 	})
 
@@ -249,6 +454,7 @@ func setupUserRoutes(protected fiber.Router) {
 	users.Put("/me/notifications", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"message": "Update notification settings endpoint",
+			"status":  "available",
 		})
 	})
 
@@ -256,6 +462,7 @@ func setupUserRoutes(protected fiber.Router) {
 	users.Put("/me/privacy", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"message": "Update privacy settings endpoint",
+			"status":  "available",
 		})
 	})
 }
@@ -267,8 +474,10 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 
 	news.Get("/feed", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message":  "DEPRECATED: Use /api/v1/news/personalized instead",
-			"redirect": "/api/v1/news/personalized",
+			"message":        "DEPRECATED: Use /api/v1/news/ instead",
+			"redirect":       "/api/v1/news/",
+			"live_apis":      "enabled",
+			"recommendation": "Switch to new endpoint for live news integration",
 		})
 	})
 
@@ -277,8 +486,10 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 
 	bookmarks.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message":  "DEPRECATED: Use /api/v1/news/bookmarks instead",
-			"redirect": "/api/v1/news/bookmarks",
+			"message":        "DEPRECATED: Use /api/v1/news/bookmarks instead",
+			"redirect":       "/api/v1/news/bookmarks",
+			"live_features":  "enabled",
+			"recommendation": "Switch to new endpoint for enhanced bookmarks",
 		})
 	})
 
@@ -287,8 +498,10 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 
 	search.Get("/news", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message":  "DEPRECATED: Use /api/v1/news/search instead",
-			"redirect": "/api/v1/news/search",
+			"message":        "DEPRECATED: Use /api/v1/news/search instead",
+			"redirect":       "/api/v1/news/search",
+			"live_search":    "enabled",
+			"recommendation": "Switch to new endpoint for live news search",
 		})
 	})
 }

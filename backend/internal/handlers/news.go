@@ -106,22 +106,26 @@ func (h *NewsHandler) GetNewsFeed(c *fiber.Ctx) error {
 		// Cache miss - fetch fresh content
 		h.logger.Info("Cache miss - fetching fresh news feed")
 
-		// Trigger news aggregation if needed
-		ctx, cancel := context.WithTimeout(c.Context(), 30*time.Second)
-		defer cancel()
-
-		if err := h.newsService.FetchAndCacheNews(ctx); err != nil {
+		// FIXED: Call live API method directly
+		freshArticles, err := h.newsService.FetchLatestNews("general", req.Limit)
+		if err != nil {
 			h.logger.Error("Failed to fetch fresh news", "error", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 				Message: "Unable to retrieve fresh news content",
 			})
 		}
 
-		// Try cache again after fetching
-		articles, _, err = h.cacheService.GetArticles(c.Context(), cacheKey, "general")
-		if err != nil || len(articles) == 0 {
-			// Return empty response if still no articles
-			articles = []models.Article{}
+		// Convert to []models.Article for response
+		articles = []models.Article{}
+		for _, article := range freshArticles {
+			articles = append(articles, *article)
+		}
+
+		// Cache the fresh results
+		if len(articles) > 0 {
+			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "general"); err != nil {
+				h.logger.Error("Failed to cache news feed", "error", err)
+			}
 		}
 
 		response = &models.NewsFeedResponse{
@@ -135,13 +139,6 @@ func (h *NewsHandler) GetNewsFeed(c *fiber.Ctx) error {
 				HasPrev:    false,
 			},
 		}
-
-		// Cache the response
-		if len(articles) > 0 {
-			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "general"); err != nil {
-				h.logger.Error("Failed to cache news feed", "error", err)
-			}
-		}
 	}
 
 	duration := time.Since(startTime)
@@ -153,6 +150,667 @@ func (h *NewsHandler) GetNewsFeed(c *fiber.Ctx) error {
 	)
 
 	return c.JSON(response)
+}
+
+// ===============================
+// ADMIN MANAGEMENT ENDPOINTS
+// ===============================
+
+// GetDetailedStats returns comprehensive system statistics for admins
+// GET /api/v1/news/admin/detailed-stats
+func (h *NewsHandler) GetDetailedStats(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// Get cache statistics
+	cacheStats := h.cacheService.GetCacheStats()
+	cacheHealth := h.cacheService.GetCacheHealth()
+
+	// TODO: Get database statistics from repository
+	// TODO: Get API usage statistics from quota manager
+
+	detailedStats := map[string]interface{}{
+		"system": map[string]interface{}{
+			"uptime_seconds": time.Since(startTime).Seconds(), // This should be server uptime
+			"memory_usage":   "TODO: Implement memory monitoring",
+			"goroutines":     "TODO: Implement goroutine monitoring",
+			"timestamp":      time.Now().Format(time.RFC3339),
+		},
+		"cache": map[string]interface{}{
+			"total_requests": cacheStats.TotalRequests,
+			"cache_hits":     cacheStats.CacheHits,
+			"cache_misses":   cacheStats.CacheMisses,
+			"hit_rate":       cacheStats.HitRate,
+			"category_stats": cacheStats.CategoryStats,
+			"peak_hour_hits": cacheStats.PeakHourHits,
+			"off_peak_hits":  cacheStats.OffPeakHits,
+			"health":         cacheHealth,
+		},
+		"database": map[string]interface{}{
+			"connection_status":  "TODO: Implement DB health check",
+			"active_connections": "TODO: Implement connection monitoring",
+			"slow_queries":       "TODO: Implement query monitoring",
+		},
+		"api_sources": map[string]interface{}{
+			"daily_quotas":  h.config.GetAPISourceConfigs(),
+			"total_quota":   h.config.GetTotalDailyQuota(),
+			"quota_usage":   "TODO: Implement quota usage tracking",
+			"source_health": "TODO: Implement API source health monitoring",
+		},
+		"articles": map[string]interface{}{
+			"total_cached":         "TODO: Count cached articles",
+			"indian_content_ratio": "TODO: Calculate Indian content percentage",
+			"categories_breakdown": "TODO: Articles per category",
+			"duplicate_detection":  "TODO: Deduplication statistics",
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Detailed stats retrieved",
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Detailed system statistics retrieved successfully",
+		Data:    detailedStats,
+	})
+}
+
+// RefreshCategory manually refreshes a specific news category
+// POST /api/v1/news/admin/refresh-category/:category
+func (h *NewsHandler) RefreshCategory(c *fiber.Ctx) error {
+	startTime := time.Now()
+	category := c.Params("category")
+
+	if category == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Category parameter is required",
+		})
+	}
+
+	h.logger.Info("Manual category refresh triggered", "category", category)
+
+	// Trigger category-specific news aggregation
+	_, cancel := context.WithTimeout(c.Context(), 30*time.Second)
+	defer cancel()
+
+	// FIXED: Use FetchNewsByCategory instead of FetchCategoryNews
+	_, err := h.newsService.FetchNewsByCategory(category, 50)
+	if err != nil {
+		h.logger.Error("Category refresh failed", "category", category, "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Message: fmt.Sprintf("Failed to refresh category '%s': %s", category, err.Error()),
+		})
+	}
+	duration := time.Since(startTime)
+	h.logger.Info("Category refresh completed", "category", category, "duration", duration)
+
+	return c.JSON(models.SuccessResponse{
+		Message: fmt.Sprintf("Category '%s' refreshed successfully", category),
+		Data: map[string]interface{}{
+			"category":         category,
+			"duration_seconds": duration.Seconds(),
+			"timestamp":        time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// ClearCache clears news cache
+// POST /api/v1/news/admin/clear-cache
+func (h *NewsHandler) ClearCache(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	var req struct {
+		CacheType string `json:"cache_type,omitempty"` // "all", "category", "search", etc.
+		Category  string `json:"category,omitempty"`   // specific category to clear
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		// If no body provided, default to clearing all cache
+		req.CacheType = "all"
+	}
+
+	switch req.CacheType {
+	case "category":
+		if req.Category == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Message: "Category is required when cache_type is 'category'",
+			})
+		}
+		// TODO: Implement category-specific cache clearing
+		h.logger.Info("Category cache cleared", "category", req.Category)
+	case "search":
+		// TODO: Implement search cache clearing
+		h.logger.Info("Search cache cleared")
+	case "all":
+		fallthrough
+	default:
+		// TODO: Implement full cache clearing
+		h.logger.Info("All cache cleared")
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Cache clearing completed",
+		"cache_type", req.CacheType,
+		"category", req.Category,
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Cache cleared successfully",
+		Data: map[string]interface{}{
+			"cache_type":       req.CacheType,
+			"category":         req.Category,
+			"duration_seconds": duration.Seconds(),
+			"timestamp":        time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// GetAPIUsageAnalytics returns API usage analytics
+// GET /api/v1/news/admin/api-usage
+func (h *NewsHandler) GetAPIUsageAnalytics(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// Parse query parameters
+	days := c.QueryInt("days", 7) // Last 7 days by default
+	if days < 1 || days > 365 {
+		days = 7
+	}
+
+	// TODO: Implement actual API usage analytics from database
+	analytics := map[string]interface{}{
+		"time_period": map[string]interface{}{
+			"days": days,
+			"from": time.Now().AddDate(0, 0, -days).Format(time.RFC3339),
+			"to":   time.Now().Format(time.RFC3339),
+		},
+		"api_sources": map[string]interface{}{
+			"newsdata_io": map[string]interface{}{
+				"daily_quota":       200,
+				"used_today":        "TODO: Implement tracking",
+				"success_rate":      "TODO: Calculate success rate",
+				"avg_response_time": "TODO: Calculate avg response time",
+			},
+			"rapidapi": map[string]interface{}{
+				"daily_quota":       16000,
+				"used_today":        "TODO: Implement tracking",
+				"success_rate":      "TODO: Calculate success rate",
+				"avg_response_time": "TODO: Calculate avg response time",
+			},
+			"gnews": map[string]interface{}{
+				"daily_quota":       100,
+				"used_today":        "TODO: Implement tracking",
+				"success_rate":      "TODO: Calculate success rate",
+				"avg_response_time": "TODO: Calculate avg response time",
+			},
+		},
+		"usage_patterns": map[string]interface{}{
+			"peak_hours":              "TODO: Identify peak usage hours",
+			"popular_categories":      "TODO: Most requested categories",
+			"geographic_distribution": "TODO: Request geography",
+		},
+		"performance": map[string]interface{}{
+			"cache_hit_rate":    "TODO: Calculate cache performance",
+			"avg_response_time": "TODO: Calculate avg API response time",
+			"error_rate":        "TODO: Calculate error rate",
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("API usage analytics retrieved",
+		"days", days,
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "API usage analytics retrieved successfully",
+		Data:    analytics,
+	})
+}
+
+// UpdateQuotaLimits updates API quota limits
+// POST /api/v1/news/admin/update-quotas
+func (h *NewsHandler) UpdateQuotaLimits(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	var req struct {
+		NewsDataIO *int `json:"newsdata_io,omitempty"`
+		RapidAPI   *int `json:"rapidapi,omitempty"`
+		GNews      *int `json:"gnews,omitempty"`
+		Mediastack *int `json:"mediastack,omitempty"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid request body",
+		})
+	}
+
+	// Validate quota limits
+	updates := make(map[string]int)
+
+	if req.NewsDataIO != nil {
+		if *req.NewsDataIO < 1 || *req.NewsDataIO > 1000 {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Message: "NewsData.io quota must be between 1 and 1000",
+			})
+		}
+		updates["newsdata_io"] = *req.NewsDataIO
+	}
+
+	if req.RapidAPI != nil {
+		if *req.RapidAPI < 1 || *req.RapidAPI > 20000 {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Message: "RapidAPI quota must be between 1 and 20000",
+			})
+		}
+		updates["rapidapi"] = *req.RapidAPI
+	}
+
+	if req.GNews != nil {
+		if *req.GNews < 1 || *req.GNews > 500 {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Message: "GNews quota must be between 1 and 500",
+			})
+		}
+		updates["gnews"] = *req.GNews
+	}
+
+	if req.Mediastack != nil {
+		if *req.Mediastack < 1 || *req.Mediastack > 100 {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Message: "Mediastack quota must be between 1 and 100",
+			})
+		}
+		updates["mediastack"] = *req.Mediastack
+	}
+
+	if len(updates) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "At least one quota limit must be provided",
+		})
+	}
+
+	// TODO: Implement actual quota limit updates in configuration
+	// This should update the running configuration and potentially persist to database
+
+	duration := time.Since(startTime)
+	h.logger.Info("Quota limits updated",
+		"updates", updates,
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Quota limits updated successfully",
+		Data: map[string]interface{}{
+			"updated_quotas":        updates,
+			"timestamp":             time.Now().Format(time.RFC3339),
+			"effective_immediately": true,
+		},
+	})
+}
+
+// ===============================
+// HEALTH CHECK ENDPOINTS
+// ===============================
+
+// HealthCheck performs basic health check
+// GET /health/news
+func (h *NewsHandler) HealthCheck(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"status":    "healthy",
+		"service":   "gonews-backend",
+		"version":   "1.0.0",
+		"timestamp": time.Now().Format(time.RFC3339),
+		"uptime":    "TODO: Calculate uptime",
+	})
+}
+
+// DetailedHealthCheck performs comprehensive health check
+// GET /health/news/detailed
+func (h *NewsHandler) DetailedHealthCheck(c *fiber.Ctx) error {
+	health := map[string]interface{}{
+		"status":    "healthy",
+		"timestamp": time.Now().Format(time.RFC3339),
+		"checks": map[string]interface{}{
+			"database": map[string]interface{}{
+				"status":        "TODO: Check database connection",
+				"response_time": "TODO: Measure DB response time",
+			},
+			"cache": h.cacheService.GetCacheHealth(),
+			"external_apis": map[string]interface{}{
+				"newsdata_io": "TODO: Check API health",
+				"rapidapi":    "TODO: Check API health",
+				"gnews":       "TODO: Check API health",
+				"mediastack":  "TODO: Check API health",
+			},
+			"memory": map[string]interface{}{
+				"status":        "TODO: Check memory usage",
+				"usage_percent": "TODO: Calculate memory usage",
+			},
+		},
+	}
+
+	return c.JSON(health)
+}
+
+// CacheHealthCheck checks cache system health
+// GET /health/news/cache
+func (h *NewsHandler) CacheHealthCheck(c *fiber.Ctx) error {
+	cacheHealth := h.cacheService.GetCacheHealth()
+
+	status := "healthy"
+	if healthy, ok := cacheHealth["healthy"].(bool); ok && !healthy {
+		status = "unhealthy"
+	}
+
+	return c.JSON(fiber.Map{
+		"status":     status,
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"cache_info": cacheHealth,
+	})
+}
+
+// APISourcesHealthCheck checks external API sources health
+// GET /health/news/api-sources
+func (h *NewsHandler) APISourcesHealthCheck(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// TODO: Implement actual API health checks
+	// For now, return placeholder status
+	apiHealth := map[string]interface{}{
+		"newsdata_io": map[string]interface{}{
+			"status":           "TODO: Ping API endpoint",
+			"last_successful":  "TODO: Last successful request time",
+			"quota_remaining":  "TODO: Check remaining quota",
+			"response_time_ms": "TODO: Measure response time",
+		},
+		"rapidapi": map[string]interface{}{
+			"status":           "TODO: Ping API endpoint",
+			"last_successful":  "TODO: Last successful request time",
+			"quota_remaining":  "TODO: Check remaining quota",
+			"response_time_ms": "TODO: Measure response time",
+		},
+		"gnews": map[string]interface{}{
+			"status":           "TODO: Ping API endpoint",
+			"last_successful":  "TODO: Last successful request time",
+			"quota_remaining":  "TODO: Check remaining quota",
+			"response_time_ms": "TODO: Measure response time",
+		},
+		"mediastack": map[string]interface{}{
+			"status":           "TODO: Ping API endpoint",
+			"last_successful":  "TODO: Last successful request time",
+			"quota_remaining":  "TODO: Check remaining quota",
+			"response_time_ms": "TODO: Measure response time",
+		},
+	}
+
+	// Determine overall status
+	overallStatus := "healthy" // TODO: Calculate based on individual API statuses
+
+	duration := time.Since(startTime)
+	h.logger.Info("API sources health check completed", "duration", duration)
+
+	return c.JSON(fiber.Map{
+		"status":      overallStatus,
+		"timestamp":   time.Now().Format(time.RFC3339),
+		"duration":    duration.Seconds(),
+		"api_sources": apiHealth,
+	})
+}
+
+// DatabaseHealthCheck checks database connection health
+// GET /health/news/database
+func (h *NewsHandler) DatabaseHealthCheck(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// TODO: Implement actual database health check
+	// Should include:
+	// - Connection test
+	// - Query response time
+	// - Connection pool status
+	// - Disk space check
+
+	dbHealth := map[string]interface{}{
+		"connection":         "TODO: Test database connection",
+		"response_time_ms":   "TODO: Measure query response time",
+		"active_connections": "TODO: Get active connection count",
+		"max_connections":    "TODO: Get max connection limit",
+		"disk_usage":         "TODO: Check database disk usage",
+		"last_migration":     "TODO: Get last migration timestamp",
+	}
+
+	// Determine status
+	status := "healthy" // TODO: Calculate based on actual checks
+
+	duration := time.Since(startTime)
+	h.logger.Info("Database health check completed", "duration", duration)
+
+	return c.JSON(fiber.Map{
+		"status":    status,
+		"timestamp": time.Now().Format(time.RFC3339),
+		"duration":  duration.Seconds(),
+		"database":  dbHealth,
+	})
+}
+
+// ===============================
+// WEBHOOK HANDLERS (Future Implementation)
+// ===============================
+
+// HandleQuotaAlert handles external API quota notifications
+// POST /webhooks/news/quota-alert
+func (h *NewsHandler) HandleQuotaAlert(c *fiber.Ctx) error {
+	var alert struct {
+		APISource     string  `json:"api_source"`
+		QuotaUsed     int     `json:"quota_used"`
+		QuotaLimit    int     `json:"quota_limit"`
+		UsagePercent  float64 `json:"usage_percent"`
+		TimeRemaining string  `json:"time_remaining"`
+	}
+
+	if err := c.BodyParser(&alert); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid webhook payload",
+		})
+	}
+
+	h.logger.Warn("API quota alert received",
+		"api_source", alert.APISource,
+		"quota_used", alert.QuotaUsed,
+		"quota_limit", alert.QuotaLimit,
+		"usage_percent", alert.UsagePercent,
+	)
+
+	// TODO: Implement quota alert handling
+	// - Update internal quota tracking
+	// - Trigger cache extension if quota running low
+	// - Send notifications to admins
+	// - Adjust fetching strategy
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Quota alert processed successfully",
+		Data: map[string]interface{}{
+			"api_source":   alert.APISource,
+			"processed_at": time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// HandleSourceUpdate handles external news source updates
+// POST /webhooks/news/source-update
+func (h *NewsHandler) HandleSourceUpdate(c *fiber.Ctx) error {
+	var update struct {
+		Source       string   `json:"source"`
+		UpdateType   string   `json:"update_type"` // "new_articles", "source_down", "source_up"
+		ArticleCount int      `json:"article_count,omitempty"`
+		Categories   []string `json:"categories,omitempty"`
+	}
+
+	if err := c.BodyParser(&update); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid webhook payload",
+		})
+	}
+
+	h.logger.Info("Source update webhook received",
+		"source", update.Source,
+		"update_type", update.UpdateType,
+		"article_count", update.ArticleCount,
+	)
+
+	// TODO: Implement source update handling
+	// - Trigger immediate cache refresh for updated categories
+	// - Update source reliability metrics
+	// - Adjust fetching priorities
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Source update processed successfully",
+		Data: map[string]interface{}{
+			"source":       update.Source,
+			"update_type":  update.UpdateType,
+			"processed_at": time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// HandleCacheInvalidation handles cache invalidation triggers
+// POST /webhooks/news/invalidate-cache
+func (h *NewsHandler) HandleCacheInvalidation(c *fiber.Ctx) error {
+	var invalidation struct {
+		CacheKeys     []string `json:"cache_keys"`
+		Categories    []string `json:"categories,omitempty"`
+		InvalidateAll bool     `json:"invalidate_all,omitempty"`
+	}
+
+	if err := c.BodyParser(&invalidation); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid webhook payload",
+		})
+	}
+
+	h.logger.Info("Cache invalidation webhook received",
+		"cache_keys", invalidation.CacheKeys,
+		"categories", invalidation.Categories,
+		"invalidate_all", invalidation.InvalidateAll,
+	)
+
+	// TODO: Implement cache invalidation
+	// - Clear specific cache keys
+	// - Clear category caches
+	// - Clear all cache if requested
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Cache invalidation processed successfully",
+		Data: map[string]interface{}{
+			"invalidated_keys":       invalidation.CacheKeys,
+			"invalidated_categories": invalidation.Categories,
+			"processed_at":           time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// ===============================
+// HELPER METHODS
+// ===============================
+
+// generateNewsFeedCacheKey generates a cache key for news feed requests
+func (h *NewsHandler) generateNewsFeedCacheKey(req *models.NewsFeedRequest) string {
+	key := fmt.Sprintf("gonews:feed:page:%d:limit:%d", req.Page, req.Limit)
+
+	if req.CategoryID != nil {
+		key += fmt.Sprintf(":cat:%d", *req.CategoryID)
+	}
+	if req.Source != nil {
+		key += fmt.Sprintf(":src:%s", *req.Source)
+	}
+	if req.OnlyIndian != nil {
+		key += fmt.Sprintf(":indian:%t", *req.OnlyIndian)
+	}
+	if req.Featured != nil {
+		key += fmt.Sprintf(":featured:%t", *req.Featured)
+	}
+	if len(req.Tags) > 0 {
+		key += fmt.Sprintf(":tags:%s", strings.Join(req.Tags, ","))
+	}
+
+	return key
+}
+
+// performSimpleSearch performs basic search functionality
+func (h *NewsHandler) performSimpleSearch(articles []models.Article, query string, onlyIndian *bool) []models.Article {
+	var results []models.Article
+	queryLower := strings.ToLower(query)
+
+	for _, article := range articles {
+		// Simple text matching in title and description
+		titleMatch := strings.Contains(strings.ToLower(article.Title), queryLower)
+		descMatch := false
+		if article.Description != nil {
+			descMatch = strings.Contains(strings.ToLower(*article.Description), queryLower)
+		}
+
+		if titleMatch || descMatch {
+			// Filter for Indian content if requested
+			if onlyIndian != nil && *onlyIndian && !article.IsIndianContent {
+				continue
+			}
+			results = append(results, article)
+		}
+	}
+
+	return results
+}
+
+// filterTrendingArticles filters articles for trending content
+func (h *NewsHandler) filterTrendingArticles(articles []models.Article, onlyIndian bool, limit int) []models.Article {
+	var trending []models.Article
+
+	for _, article := range articles {
+		// Filter for Indian content if requested
+		if onlyIndian && !article.IsIndianContent {
+			continue
+		}
+
+		// Simple trending criteria: recent + high view count or featured
+		isRecent := time.Since(article.PublishedAt) < 24*time.Hour
+		isTrending := isRecent && (article.ViewCount > 100 || article.IsFeatured)
+
+		if isTrending {
+			trending = append(trending, article)
+		}
+
+		// Stop if we have enough trending articles
+		if len(trending) >= limit*2 { // Get extra for better selection
+			break
+		}
+	}
+
+	// Sort by view count descending
+	for i := 0; i < len(trending)-1; i++ {
+		for j := i + 1; j < len(trending); j++ {
+			if trending[i].ViewCount < trending[j].ViewCount {
+				trending[i], trending[j] = trending[j], trending[i]
+			}
+		}
+	}
+
+	// Return top trending articles
+	if len(trending) > limit {
+		trending = trending[:limit]
+	}
+
+	return trending
+}
+
+// Helper function to create string pointer
+func strPtr(s string) *string {
+	return &s
+}
+
+// Helper function to create int pointer
+func intPtr(i int) *int {
+	return &i
 }
 
 // GetCategoryNews returns news for a specific category
@@ -194,20 +852,19 @@ func (h *NewsHandler) GetCategoryNews(c *fiber.Ctx) error {
 		// Cache miss - fetch fresh category content
 		h.logger.Info("Fetching fresh category news", "category", category)
 
-		ctx, cancel := context.WithTimeout(c.Context(), 20*time.Second)
-		defer cancel()
-
-		if err := h.newsService.FetchCategoryNews(ctx, category); err != nil {
+		// FIXED: Use FetchNewsByCategory instead of FetchCategoryNews
+		freshArticles, err := h.newsService.FetchNewsByCategory(category, limit*2)
+		if err != nil {
 			h.logger.Error("Failed to fetch category news", "category", category, "error", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
 				Message: fmt.Sprintf("Unable to retrieve news for category: %s", category),
 			})
 		}
 
-		// Try cache again after fetching
-		articles, _, err = h.cacheService.GetArticles(c.Context(), cacheKey, category)
-		if err != nil || len(articles) == 0 {
-			articles = []models.Article{}
+		// Convert []*models.Article to []models.Article for cache
+		articles = []models.Article{}
+		for _, article := range freshArticles {
+			articles = append(articles, *article)
 		}
 
 		// Cache the fresh results
@@ -216,6 +873,7 @@ func (h *NewsHandler) GetCategoryNews(c *fiber.Ctx) error {
 				h.logger.Error("Failed to cache category news", "category", category, "error", err)
 			}
 		}
+
 	}
 
 	// Filter for Indian content if requested
@@ -422,6 +1080,18 @@ func (h *NewsHandler) GetTrendingNews(c *fiber.Ctx) error {
 					topCount = len(categoryArticles)
 				}
 				allArticles = append(allArticles, categoryArticles[:topCount]...)
+			}
+		}
+
+		// If no cached content, fetch fresh trending content
+		if len(allArticles) == 0 {
+			freshArticles, err := h.newsService.FetchLatestNews("general", limit*3)
+			if err != nil {
+				h.logger.Error("Failed to fetch fresh trending news", "error", err)
+			} else {
+				for _, article := range freshArticles {
+					allArticles = append(allArticles, *article)
+				}
 			}
 		}
 
@@ -925,6 +1595,16 @@ func (h *NewsHandler) GetPersonalizedFeed(c *fiber.Ctx) error {
 		// Fallback to general Indian content
 		articles, _, _ = h.cacheService.GetArticles(c.Context(), "gonews:category:general", "general")
 
+		// If no cached content, fetch fresh personalized content
+		if len(articles) == 0 {
+			freshArticles, err := h.newsService.FetchLatestNews("general", limit)
+			if err == nil {
+				for _, article := range freshArticles {
+					articles = append(articles, *article)
+				}
+			}
+		}
+
 		// Cache personalized results
 		if len(articles) > 0 {
 			h.cacheService.SetArticles(c.Context(), cacheKey, articles, "personalized")
@@ -1009,6 +1689,18 @@ func (h *NewsHandler) GetIndiaFocusedFeed(c *fiber.Ctx) error {
 			}
 		}
 
+		// If no cached content, fetch fresh India-focused content
+		if len(allArticles) == 0 {
+			freshArticles, err := h.newsService.FetchLatestNews("general", limit*2)
+			if err == nil {
+				for _, article := range freshArticles {
+					if article.IsIndianContent {
+						allArticles = append(allArticles, *article)
+					}
+				}
+			}
+		}
+
 		articles = allArticles
 
 		// Cache the India-focused results
@@ -1042,664 +1734,4 @@ func (h *NewsHandler) GetIndiaFocusedFeed(c *fiber.Ctx) error {
 	)
 
 	return c.JSON(response)
-}
-
-// ===============================
-// ADMIN MANAGEMENT ENDPOINTS
-// ===============================
-
-// GetDetailedStats returns comprehensive system statistics for admins
-// GET /api/v1/news/admin/detailed-stats
-func (h *NewsHandler) GetDetailedStats(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// Get cache statistics
-	cacheStats := h.cacheService.GetCacheStats()
-	cacheHealth := h.cacheService.GetCacheHealth()
-
-	// TODO: Get database statistics from repository
-	// TODO: Get API usage statistics from quota manager
-
-	detailedStats := map[string]interface{}{
-		"system": map[string]interface{}{
-			"uptime_seconds": time.Since(startTime).Seconds(), // This should be server uptime
-			"memory_usage":   "TODO: Implement memory monitoring",
-			"goroutines":     "TODO: Implement goroutine monitoring",
-			"timestamp":      time.Now().Format(time.RFC3339),
-		},
-		"cache": map[string]interface{}{
-			"total_requests": cacheStats.TotalRequests,
-			"cache_hits":     cacheStats.CacheHits,
-			"cache_misses":   cacheStats.CacheMisses,
-			"hit_rate":       cacheStats.HitRate,
-			"category_stats": cacheStats.CategoryStats,
-			"peak_hour_hits": cacheStats.PeakHourHits,
-			"off_peak_hits":  cacheStats.OffPeakHits,
-			"health":         cacheHealth,
-		},
-		"database": map[string]interface{}{
-			"connection_status":  "TODO: Implement DB health check",
-			"active_connections": "TODO: Implement connection monitoring",
-			"slow_queries":       "TODO: Implement query monitoring",
-		},
-		"api_sources": map[string]interface{}{
-			"daily_quotas":  h.config.GetAPISourceConfigs(),
-			"total_quota":   h.config.GetTotalDailyQuota(),
-			"quota_usage":   "TODO: Implement quota usage tracking",
-			"source_health": "TODO: Implement API source health monitoring",
-		},
-		"articles": map[string]interface{}{
-			"total_cached":         "TODO: Count cached articles",
-			"indian_content_ratio": "TODO: Calculate Indian content percentage",
-			"categories_breakdown": "TODO: Articles per category",
-			"duplicate_detection":  "TODO: Deduplication statistics",
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Detailed stats retrieved",
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Detailed system statistics retrieved successfully",
-		Data:    detailedStats,
-	})
-}
-
-// RefreshCategory manually refreshes a specific news category
-// POST /api/v1/news/admin/refresh-category/:category
-func (h *NewsHandler) RefreshCategory(c *fiber.Ctx) error {
-	startTime := time.Now()
-	category := c.Params("category")
-
-	if category == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Category parameter is required",
-		})
-	}
-
-	h.logger.Info("Manual category refresh triggered", "category", category)
-
-	// Trigger category-specific news aggregation
-	ctx, cancel := context.WithTimeout(c.Context(), 30*time.Second)
-	defer cancel()
-
-	if err := h.newsService.FetchCategoryNews(ctx, category); err != nil {
-		h.logger.Error("Category refresh failed", "category", category, "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Message: fmt.Sprintf("Failed to refresh category '%s': %s", category, err.Error()),
-		})
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Category refresh completed", "category", category, "duration", duration)
-
-	return c.JSON(models.SuccessResponse{
-		Message: fmt.Sprintf("Category '%s' refreshed successfully", category),
-		Data: map[string]interface{}{
-			"category":         category,
-			"duration_seconds": duration.Seconds(),
-			"timestamp":        time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// ClearCache clears news cache
-// POST /api/v1/news/admin/clear-cache
-func (h *NewsHandler) ClearCache(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	var req struct {
-		CacheType string `json:"cache_type,omitempty"` // "all", "category", "search", etc.
-		Category  string `json:"category,omitempty"`   // specific category to clear
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		// If no body provided, default to clearing all cache
-		req.CacheType = "all"
-	}
-
-	switch req.CacheType {
-	case "category":
-		if req.Category == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-				Message: "Category is required when cache_type is 'category'",
-			})
-		}
-		// TODO: Implement category-specific cache clearing
-		h.logger.Info("Category cache cleared", "category", req.Category)
-	case "search":
-		// TODO: Implement search cache clearing
-		h.logger.Info("Search cache cleared")
-	case "all":
-		fallthrough
-	default:
-		// TODO: Implement full cache clearing
-		h.logger.Info("All cache cleared")
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Cache clearing completed",
-		"cache_type", req.CacheType,
-		"category", req.Category,
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Cache cleared successfully",
-		Data: map[string]interface{}{
-			"cache_type":       req.CacheType,
-			"category":         req.Category,
-			"duration_seconds": duration.Seconds(),
-			"timestamp":        time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// GetAPIUsageAnalytics returns API usage analytics
-// GET /api/v1/news/admin/api-usage
-func (h *NewsHandler) GetAPIUsageAnalytics(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// Parse query parameters
-	days := c.QueryInt("days", 7) // Last 7 days by default
-	if days < 1 || days > 365 {
-		days = 7
-	}
-
-	// TODO: Implement actual API usage analytics from database
-	analytics := map[string]interface{}{
-		"time_period": map[string]interface{}{
-			"days": days,
-			"from": time.Now().AddDate(0, 0, -days).Format(time.RFC3339),
-			"to":   time.Now().Format(time.RFC3339),
-		},
-		"api_sources": map[string]interface{}{
-			"newsdata_io": map[string]interface{}{
-				"daily_quota":       200,
-				"used_today":        "TODO: Implement tracking",
-				"success_rate":      "TODO: Calculate success rate",
-				"avg_response_time": "TODO: Calculate avg response time",
-			},
-			"contextual_web": map[string]interface{}{
-				"daily_quota":       333,
-				"used_today":        "TODO: Implement tracking",
-				"success_rate":      "TODO: Calculate success rate",
-				"avg_response_time": "TODO: Calculate avg response time",
-			},
-			"gnews": map[string]interface{}{
-				"daily_quota":       100,
-				"used_today":        "TODO: Implement tracking",
-				"success_rate":      "TODO: Calculate success rate",
-				"avg_response_time": "TODO: Calculate avg response time",
-			},
-		},
-		"usage_patterns": map[string]interface{}{
-			"peak_hours":              "TODO: Identify peak usage hours",
-			"popular_categories":      "TODO: Most requested categories",
-			"geographic_distribution": "TODO: Request geography",
-		},
-		"performance": map[string]interface{}{
-			"cache_hit_rate":    "TODO: Calculate cache performance",
-			"avg_response_time": "TODO: Calculate avg API response time",
-			"error_rate":        "TODO: Calculate error rate",
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("API usage analytics retrieved",
-		"days", days,
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "API usage analytics retrieved successfully",
-		Data:    analytics,
-	})
-}
-
-// UpdateQuotaLimits updates API quota limits
-// POST /api/v1/news/admin/update-quotas
-func (h *NewsHandler) UpdateQuotaLimits(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	var req struct {
-		NewsDataIO    *int `json:"newsdata_io,omitempty"`
-		ContextualWeb *int `json:"contextual_web,omitempty"`
-		GNews         *int `json:"gnews,omitempty"`
-		Mediastack    *int `json:"mediastack,omitempty"`
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid request body",
-		})
-	}
-
-	// Validate quota limits
-	updates := make(map[string]int)
-
-	if req.NewsDataIO != nil {
-		if *req.NewsDataIO < 1 || *req.NewsDataIO > 1000 {
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-				Message: "NewsData.io quota must be between 1 and 1000",
-			})
-		}
-		updates["newsdata_io"] = *req.NewsDataIO
-	}
-
-	if req.ContextualWeb != nil {
-		if *req.ContextualWeb < 1 || *req.ContextualWeb > 1000 {
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-				Message: "ContextualWeb quota must be between 1 and 1000",
-			})
-		}
-		updates["contextual_web"] = *req.ContextualWeb
-	}
-
-	if req.GNews != nil {
-		if *req.GNews < 1 || *req.GNews > 500 {
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-				Message: "GNews quota must be between 1 and 500",
-			})
-		}
-		updates["gnews"] = *req.GNews
-	}
-
-	if req.Mediastack != nil {
-		if *req.Mediastack < 1 || *req.Mediastack > 100 {
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-				Message: "Mediastack quota must be between 1 and 100",
-			})
-		}
-		updates["mediastack"] = *req.Mediastack
-	}
-
-	if len(updates) == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "At least one quota limit must be provided",
-		})
-	}
-
-	// TODO: Implement actual quota limit updates in configuration
-	// This should update the running configuration and potentially persist to database
-
-	duration := time.Since(startTime)
-	h.logger.Info("Quota limits updated",
-		"updates", updates,
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Quota limits updated successfully",
-		Data: map[string]interface{}{
-			"updated_quotas":        updates,
-			"timestamp":             time.Now().Format(time.RFC3339),
-			"effective_immediately": true,
-		},
-	})
-}
-
-// ===============================
-// HEALTH CHECK ENDPOINTS
-// ===============================
-
-// HealthCheck performs basic health check
-// GET /health/news
-func (h *NewsHandler) HealthCheck(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{
-		"status":    "healthy",
-		"service":   "gonews-backend",
-		"version":   "1.0.0",
-		"timestamp": time.Now().Format(time.RFC3339),
-		"uptime":    "TODO: Calculate uptime",
-	})
-}
-
-// DetailedHealthCheck performs comprehensive health check
-// GET /health/news/detailed
-func (h *NewsHandler) DetailedHealthCheck(c *fiber.Ctx) error {
-	health := map[string]interface{}{
-		"status":    "healthy",
-		"timestamp": time.Now().Format(time.RFC3339),
-		"checks": map[string]interface{}{
-			"database": map[string]interface{}{
-				"status":        "TODO: Check database connection",
-				"response_time": "TODO: Measure DB response time",
-			},
-			"cache": h.cacheService.GetCacheHealth(),
-			"external_apis": map[string]interface{}{
-				"newsdata_io":    "TODO: Check API health",
-				"contextual_web": "TODO: Check API health",
-				"gnews":          "TODO: Check API health",
-				"mediastack":     "TODO: Check API health",
-			},
-			"memory": map[string]interface{}{
-				"status":        "TODO: Check memory usage",
-				"usage_percent": "TODO: Calculate memory usage",
-			},
-		},
-	}
-
-	return c.JSON(health)
-}
-
-// CacheHealthCheck checks cache system health
-// GET /health/news/cache
-func (h *NewsHandler) CacheHealthCheck(c *fiber.Ctx) error {
-	cacheHealth := h.cacheService.GetCacheHealth()
-
-	status := "healthy"
-	if healthy, ok := cacheHealth["healthy"].(bool); ok && !healthy {
-		status = "unhealthy"
-	}
-
-	return c.JSON(fiber.Map{
-		"status":     status,
-		"timestamp":  time.Now().Format(time.RFC3339),
-		"cache_info": cacheHealth,
-	})
-}
-
-// APISourcesHealthCheck checks external API sources health
-// GET /health/news/api-sources
-func (h *NewsHandler) APISourcesHealthCheck(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// TODO: Implement actual API health checks
-	// For now, return placeholder status
-	apiHealth := map[string]interface{}{
-		"newsdata_io": map[string]interface{}{
-			"status":           "TODO: Ping API endpoint",
-			"last_successful":  "TODO: Last successful request time",
-			"quota_remaining":  "TODO: Check remaining quota",
-			"response_time_ms": "TODO: Measure response time",
-		},
-		"contextual_web": map[string]interface{}{
-			"status":           "TODO: Ping API endpoint",
-			"last_successful":  "TODO: Last successful request time",
-			"quota_remaining":  "TODO: Check remaining quota",
-			"response_time_ms": "TODO: Measure response time",
-		},
-		"gnews": map[string]interface{}{
-			"status":           "TODO: Ping API endpoint",
-			"last_successful":  "TODO: Last successful request time",
-			"quota_remaining":  "TODO: Check remaining quota",
-			"response_time_ms": "TODO: Measure response time",
-		},
-		"mediastack": map[string]interface{}{
-			"status":           "TODO: Ping API endpoint",
-			"last_successful":  "TODO: Last successful request time",
-			"quota_remaining":  "TODO: Check remaining quota",
-			"response_time_ms": "TODO: Measure response time",
-		},
-	}
-
-	// Determine overall status
-	overallStatus := "healthy" // TODO: Calculate based on individual API statuses
-
-	duration := time.Since(startTime)
-	h.logger.Info("API sources health check completed", "duration", duration)
-
-	return c.JSON(fiber.Map{
-		"status":      overallStatus,
-		"timestamp":   time.Now().Format(time.RFC3339),
-		"duration":    duration.Seconds(),
-		"api_sources": apiHealth,
-	})
-}
-
-// DatabaseHealthCheck checks database connection health
-// GET /health/news/database
-func (h *NewsHandler) DatabaseHealthCheck(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// TODO: Implement actual database health check
-	// Should include:
-	// - Connection test
-	// - Query response time
-	// - Connection pool status
-	// - Disk space check
-
-	dbHealth := map[string]interface{}{
-		"connection":         "TODO: Test database connection",
-		"response_time_ms":   "TODO: Measure query response time",
-		"active_connections": "TODO: Get active connection count",
-		"max_connections":    "TODO: Get max connection limit",
-		"disk_usage":         "TODO: Check database disk usage",
-		"last_migration":     "TODO: Get last migration timestamp",
-	}
-
-	// Determine status
-	status := "healthy" // TODO: Calculate based on actual checks
-
-	duration := time.Since(startTime)
-	h.logger.Info("Database health check completed", "duration", duration)
-
-	return c.JSON(fiber.Map{
-		"status":    status,
-		"timestamp": time.Now().Format(time.RFC3339),
-		"duration":  duration.Seconds(),
-		"database":  dbHealth,
-	})
-}
-
-// ===============================
-// WEBHOOK HANDLERS (Future Implementation)
-// ===============================
-
-// HandleQuotaAlert handles external API quota notifications
-// POST /webhooks/news/quota-alert
-func (h *NewsHandler) HandleQuotaAlert(c *fiber.Ctx) error {
-	var alert struct {
-		APISource     string  `json:"api_source"`
-		QuotaUsed     int     `json:"quota_used"`
-		QuotaLimit    int     `json:"quota_limit"`
-		UsagePercent  float64 `json:"usage_percent"`
-		TimeRemaining string  `json:"time_remaining"`
-	}
-
-	if err := c.BodyParser(&alert); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid webhook payload",
-		})
-	}
-
-	h.logger.Warn("API quota alert received",
-		"api_source", alert.APISource,
-		"quota_used", alert.QuotaUsed,
-		"quota_limit", alert.QuotaLimit,
-		"usage_percent", alert.UsagePercent,
-	)
-
-	// TODO: Implement quota alert handling
-	// - Update internal quota tracking
-	// - Trigger cache extension if quota running low
-	// - Send notifications to admins
-	// - Adjust fetching strategy
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Quota alert processed successfully",
-		Data: map[string]interface{}{
-			"api_source":   alert.APISource,
-			"processed_at": time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// HandleSourceUpdate handles external news source updates
-// POST /webhooks/news/source-update
-func (h *NewsHandler) HandleSourceUpdate(c *fiber.Ctx) error {
-	var update struct {
-		Source       string   `json:"source"`
-		UpdateType   string   `json:"update_type"` // "new_articles", "source_down", "source_up"
-		ArticleCount int      `json:"article_count,omitempty"`
-		Categories   []string `json:"categories,omitempty"`
-	}
-
-	if err := c.BodyParser(&update); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid webhook payload",
-		})
-	}
-
-	h.logger.Info("Source update webhook received",
-		"source", update.Source,
-		"update_type", update.UpdateType,
-		"article_count", update.ArticleCount,
-	)
-
-	// TODO: Implement source update handling
-	// - Trigger immediate cache refresh for updated categories
-	// - Update source reliability metrics
-	// - Adjust fetching priorities
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Source update processed successfully",
-		Data: map[string]interface{}{
-			"source":       update.Source,
-			"update_type":  update.UpdateType,
-			"processed_at": time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// HandleCacheInvalidation handles cache invalidation triggers
-// POST /webhooks/news/invalidate-cache
-func (h *NewsHandler) HandleCacheInvalidation(c *fiber.Ctx) error {
-	var invalidation struct {
-		CacheKeys     []string `json:"cache_keys"`
-		Categories    []string `json:"categories,omitempty"`
-		InvalidateAll bool     `json:"invalidate_all,omitempty"`
-	}
-
-	if err := c.BodyParser(&invalidation); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid webhook payload",
-		})
-	}
-
-	h.logger.Info("Cache invalidation webhook received",
-		"cache_keys", invalidation.CacheKeys,
-		"categories", invalidation.Categories,
-		"invalidate_all", invalidation.InvalidateAll,
-	)
-
-	// TODO: Implement cache invalidation
-	// - Clear specific cache keys
-	// - Clear category caches
-	// - Clear all cache if requested
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Cache invalidation processed successfully",
-		Data: map[string]interface{}{
-			"invalidated_keys":       invalidation.CacheKeys,
-			"invalidated_categories": invalidation.Categories,
-			"processed_at":           time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// ===============================
-// HELPER METHODS
-// ===============================
-
-// generateNewsFeedCacheKey generates a cache key for news feed requests
-func (h *NewsHandler) generateNewsFeedCacheKey(req *models.NewsFeedRequest) string {
-	key := fmt.Sprintf("gonews:feed:page:%d:limit:%d", req.Page, req.Limit)
-
-	if req.CategoryID != nil {
-		key += fmt.Sprintf(":cat:%d", *req.CategoryID)
-	}
-	if req.Source != nil {
-		key += fmt.Sprintf(":src:%s", *req.Source)
-	}
-	if req.OnlyIndian != nil {
-		key += fmt.Sprintf(":indian:%t", *req.OnlyIndian)
-	}
-	if req.Featured != nil {
-		key += fmt.Sprintf(":featured:%t", *req.Featured)
-	}
-	if len(req.Tags) > 0 {
-		key += fmt.Sprintf(":tags:%s", strings.Join(req.Tags, ","))
-	}
-
-	return key
-}
-
-// performSimpleSearch performs basic search functionality
-func (h *NewsHandler) performSimpleSearch(articles []models.Article, query string, onlyIndian *bool) []models.Article {
-	var results []models.Article
-	queryLower := strings.ToLower(query)
-
-	for _, article := range articles {
-		// Simple text matching in title and description
-		titleMatch := strings.Contains(strings.ToLower(article.Title), queryLower)
-		descMatch := false
-		if article.Description != nil {
-			descMatch = strings.Contains(strings.ToLower(*article.Description), queryLower)
-		}
-
-		if titleMatch || descMatch {
-			// Filter for Indian content if requested
-			if onlyIndian != nil && *onlyIndian && !article.IsIndianContent {
-				continue
-			}
-			results = append(results, article)
-		}
-	}
-
-	return results
-}
-
-// filterTrendingArticles filters articles for trending content
-func (h *NewsHandler) filterTrendingArticles(articles []models.Article, onlyIndian bool, limit int) []models.Article {
-	var trending []models.Article
-
-	for _, article := range articles {
-		// Filter for Indian content if requested
-		if onlyIndian && !article.IsIndianContent {
-			continue
-		}
-
-		// Simple trending criteria: recent + high view count or featured
-		isRecent := time.Since(article.PublishedAt) < 24*time.Hour
-		isTrending := isRecent && (article.ViewCount > 100 || article.IsFeatured)
-
-		if isTrending {
-			trending = append(trending, article)
-		}
-
-		// Stop if we have enough trending articles
-		if len(trending) >= limit*2 { // Get extra for better selection
-			break
-		}
-	}
-
-	// Sort by view count descending
-	for i := 0; i < len(trending)-1; i++ {
-		for j := i + 1; j < len(trending); j++ {
-			if trending[i].ViewCount < trending[j].ViewCount {
-				trending[i], trending[j] = trending[j], trending[i]
-			}
-		}
-	}
-
-	// Return top trending articles
-	if len(trending) > limit {
-		trending = trending[:limit]
-	}
-
-	return trending
-}
-
-// Helper function to create string pointer
-func strPtr(s string) *string {
-	return &s
-}
-
-// Helper function to create int pointer
-func intPtr(i int) *int {
-	return &i
 }

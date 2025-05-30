@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -46,6 +47,12 @@ type Config struct {
 	MediastackAPIKey     string
 	MediastackDailyLimit int
 
+	// NEW: Simple API Configuration (matches .env file)
+	NewsDataQuota   int
+	GNewsQuota      int
+	MediastackQuota int
+	RapidAPIQuota   int
+
 	// India-specific settings
 	DefaultTimezone   string
 	MarketStartHour   int // IST
@@ -54,6 +61,19 @@ type Config struct {
 	IPLEndHour        int // IST
 	BusinessStartHour int // IST
 	BusinessEndHour   int // IST
+
+	// NEW: Enhanced India-specific Configuration
+	Timezone             string
+	MarketHoursStart     string
+	MarketHoursEnd       string
+	IPLHoursStart        string
+	IPLHoursEnd          string
+	BusinessHoursStart   string
+	BusinessHoursEnd     string
+	IndiaContentPercent  int
+	GlobalContentPercent int
+	MaxArticlesPerFetch  int
+	DeduplicationWindow  int
 
 	// Content Strategy - Enhanced for RapidAPI
 	IndianContentPercentage int
@@ -72,6 +92,14 @@ type Config struct {
 	HealthTTL        int
 	EntertainmentTTL int // New: Entertainment cache
 	ExtendedTTL      int
+
+	// NEW: Simple Cache TTL Configuration (in seconds, matches .env)
+	RedisTTLDefault  int
+	RedisTTLSports   int
+	RedisTTLFinance  int
+	RedisTTLBusiness int
+	RedisTTLTech     int
+	RedisTTLHealth   int
 
 	// Event-driven TTL (in minutes)
 	IPLEventTTL      int // During IPL matches
@@ -100,7 +128,7 @@ type Config struct {
 }
 
 // Load loads configuration from environment variables with sensible defaults
-func Load() *Config {
+func Load() (*Config, error) {
 	// Load .env file - ignore errors as it might not exist in production
 	err := godotenv.Load()
 	if err != nil {
@@ -110,7 +138,7 @@ func Load() *Config {
 	// Parse RapidAPI endpoints from environment
 	rapidAPIEndpoints := parseRapidAPIEndpoints(getEnv("RAPIDAPI_ENDPOINTS", ""))
 
-	return &Config{
+	cfg := &Config{
 		// Server
 		Port:           getEnv("PORT", "8080"),
 		Environment:    getEnv("ENVIRONMENT", "development"),
@@ -127,11 +155,11 @@ func Load() *Config {
 		JWTExpirationHours: getEnvAsInt("JWT_EXPIRATION_HOURS", 24),
 		JWTRefreshDays:     getEnvAsInt("JWT_REFRESH_DAYS", 7),
 
-		// External APIs - CORRECTED: RapidAPI Dominant Strategy
+		// External APIs - CORRECTED: RapidAPI Dominant Strategy (Legacy)
 		// RapidAPI (PRIMARY - 15,000/day)
-		RapidAPIKey:         getEnv("RAPIDAPI_KEY", ""),
-		RapidAPIDailyLimit:  getEnvAsInt("RAPIDAPI_DAILY_LIMIT", 15000), // 15,000/day (500K/month ÷ 30)
-		RapidAPIHourlyLimit: getEnvAsInt("RAPIDAPI_HOURLY_LIMIT", 1000), // 1000/hour platform limit
+		RapidAPIKey:         getEnv("RAPIDAPI_API_KEY", getEnv("RAPIDAPI_KEY", "")), // Support both key names
+		RapidAPIDailyLimit:  getEnvAsInt("RAPIDAPI_DAILY_LIMIT", 15000),             // 15,000/day (500K/month ÷ 30)
+		RapidAPIHourlyLimit: getEnvAsInt("RAPIDAPI_HOURLY_LIMIT", 1000),             // 1000/hour platform limit
 		RapidAPIEndpoints:   rapidAPIEndpoints,
 
 		// NewsData.io (SECONDARY - 150/day)
@@ -146,7 +174,13 @@ func Load() *Config {
 		MediastackAPIKey:     getEnv("MEDIASTACK_API_KEY", ""),
 		MediastackDailyLimit: getEnvAsInt("MEDIASTACK_DAILY_LIMIT", 12), // Conservative: 16 → 12
 
-		// India-specific settings (IST = UTC+5:30)
+		// NEW: Simple API Configuration (matches .env quotas)
+		NewsDataQuota:   getEnvAsInt("NEWSDATA_QUOTA", 150),
+		GNewsQuota:      getEnvAsInt("GNEWS_QUOTA", 75),
+		MediastackQuota: getEnvAsInt("MEDIASTACK_QUOTA", 3),
+		RapidAPIQuota:   getEnvAsInt("RAPIDAPI_QUOTA", 500),
+
+		// India-specific settings (IST = UTC+5:30) - Legacy
 		DefaultTimezone:   getEnv("DEFAULT_TIMEZONE", "Asia/Kolkata"),
 		MarketStartHour:   getEnvAsInt("MARKET_START_HOUR", 9),   // 9:15 AM IST
 		MarketEndHour:     getEnvAsInt("MARKET_END_HOUR", 15),    // 3:30 PM IST
@@ -155,15 +189,28 @@ func Load() *Config {
 		BusinessStartHour: getEnvAsInt("BUSINESS_START_HOUR", 9), // 9:00 AM IST
 		BusinessEndHour:   getEnvAsInt("BUSINESS_END_HOUR", 18),  // 6:00 PM IST
 
-		// Content Strategy - Enhanced for RapidAPI Dominance
+		// NEW: Enhanced India-specific Configuration
+		Timezone:             getEnv("TIMEZONE", "Asia/Kolkata"),
+		MarketHoursStart:     getEnv("MARKET_HOURS_START", "09:15"),
+		MarketHoursEnd:       getEnv("MARKET_HOURS_END", "15:30"),
+		IPLHoursStart:        getEnv("IPL_HOURS_START", "19:00"),
+		IPLHoursEnd:          getEnv("IPL_HOURS_END", "23:00"),
+		BusinessHoursStart:   getEnv("BUSINESS_HOURS_START", "09:00"),
+		BusinessHoursEnd:     getEnv("BUSINESS_HOURS_END", "18:00"),
+		IndiaContentPercent:  getEnvAsInt("INDIA_CONTENT_PERCENTAGE", 75),
+		GlobalContentPercent: getEnvAsInt("GLOBAL_CONTENT_PERCENTAGE", 25),
+		MaxArticlesPerFetch:  getEnvAsInt("MAX_ARTICLES_PER_FETCH", 50),
+		DeduplicationWindow:  getEnvAsInt("DEDUPLICATION_TIME_WINDOW", 3600),
+
+		// Content Strategy - Enhanced for RapidAPI Dominance (Legacy)
 		IndianContentPercentage: getEnvAsInt("INDIAN_CONTENT_PERCENTAGE", 75), // 75%
 		GlobalContentPercentage: getEnvAsInt("GLOBAL_CONTENT_PERCENTAGE", 25), // 25%
 
-		// RapidAPI Content Distribution (75% Indian, 25% Global of 15,000)
+		// RapidAPI Content Distribution (75% Indian, 25% Global of 15,000) - Legacy
 		RapidAPIIndianRequests: getEnvAsInt("RAPIDAPI_INDIAN_REQUESTS", 11250), // 11,250/day
 		RapidAPIGlobalRequests: getEnvAsInt("RAPIDAPI_GLOBAL_REQUESTS", 3750),  // 3,750/day
 
-		// Dynamic Cache TTL (in minutes) - UPDATED: Real-time Strategy
+		// Dynamic Cache TTL (in minutes) - UPDATED: Real-time Strategy (Legacy)
 		BreakingNewsTTL:  getEnvAsInt("BREAKING_NEWS_TTL", 5),  // 5min for breaking news
 		SportsTTL:        getEnvAsInt("SPORTS_TTL", 10),        // 10min base → 5min during IPL
 		FinanceTTL:       getEnvAsInt("FINANCE_TTL", 15),       // 15min base → 10min during market
@@ -172,6 +219,14 @@ func Load() *Config {
 		HealthTTL:        getEnvAsInt("HEALTH_TTL", 240),       // 4hr evergreen
 		EntertainmentTTL: getEnvAsInt("ENTERTAINMENT_TTL", 60), // 1hr for entertainment
 		ExtendedTTL:      getEnvAsInt("EXTENDED_TTL", 180),     // 3hr for quota conservation
+
+		// NEW: Simple Cache TTL Configuration (in seconds, matches .env)
+		RedisTTLDefault:  getEnvAsInt("REDIS_TTL_DEFAULT", 3600),
+		RedisTTLSports:   getEnvAsInt("REDIS_TTL_SPORTS", 1800),
+		RedisTTLFinance:  getEnvAsInt("REDIS_TTL_FINANCE", 1800),
+		RedisTTLBusiness: getEnvAsInt("REDIS_TTL_BUSINESS", 3600),
+		RedisTTLTech:     getEnvAsInt("REDIS_TTL_TECH", 7200),
+		RedisTTLHealth:   getEnvAsInt("REDIS_TTL_HEALTH", 14400),
 
 		// Event-driven TTL (in minutes)
 		IPLEventTTL:      getEnvAsInt("IPL_EVENT_TTL", 5),       // 5min during IPL matches
@@ -198,6 +253,22 @@ func Load() *Config {
 		QuotaCriticalThreshold: getEnvAsInt("QUOTA_CRITICAL_THRESHOLD", 95), // 95% critical
 		QuotaResetHour:         getEnvAsInt("QUOTA_RESET_HOUR", 0),          // Midnight IST reset
 	}
+
+	// Validate critical API keys
+	if cfg.NewsDataAPIKey == "" {
+		log.Printf("Warning: NEWSDATA_API_KEY not set")
+	}
+	if cfg.GNewsAPIKey == "" {
+		log.Printf("Warning: GNEWS_API_KEY not set")
+	}
+	if cfg.MediastackAPIKey == "" {
+		log.Printf("Warning: MEDIASTACK_API_KEY not set")
+	}
+	if cfg.RapidAPIKey == "" {
+		log.Printf("Warning: RAPIDAPI_KEY not set")
+	}
+
+	return cfg, nil
 }
 
 // IsProduction returns true if the environment is production
@@ -231,7 +302,62 @@ func (c *Config) GetContentStrategy() (int, int) {
 }
 
 // ===============================
-// NEW: RAPIDAPI-SPECIFIC HELPER FUNCTIONS
+// NEW: ENHANCED HELPER FUNCTIONS
+// ===============================
+
+// GetLocation returns the configured timezone location
+func (c *Config) GetLocation() *time.Location {
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		log.Printf("Warning: Could not load timezone %s, using UTC", c.Timezone)
+		return time.UTC
+	}
+	return loc
+}
+
+// IsMarketHours checks if current time is during market hours
+func (c *Config) IsMarketHours() bool {
+	now := time.Now().In(c.GetLocation())
+	current := now.Format("15:04")
+	return current >= c.MarketHoursStart && current <= c.MarketHoursEnd
+}
+
+// IsIPLTime checks if current time is during IPL hours
+func (c *Config) IsIPLTime() bool {
+	now := time.Now().In(c.GetLocation())
+	current := now.Format("15:04")
+	return current >= c.IPLHoursStart && current <= c.IPLHoursEnd
+}
+
+// IsBusinessHours checks if current time is during business hours
+func (c *Config) IsBusinessHours() bool {
+	now := time.Now().In(c.GetLocation())
+	current := now.Format("15:04")
+	return current >= c.BusinessHoursStart && current <= c.BusinessHoursEnd
+}
+
+// GetSimpleAPIQuotas returns the simplified API quotas for live integration
+func (c *Config) GetSimpleAPIQuotas() map[string]int {
+	return map[string]int{
+		"newsdata":   c.NewsDataQuota,
+		"gnews":      c.GNewsQuota,
+		"mediastack": c.MediastackQuota,
+		"rapidapi":   c.RapidAPIQuota,
+	}
+}
+
+// GetSimpleAPIKeys returns the API keys for live integration
+func (c *Config) GetSimpleAPIKeys() map[string]string {
+	return map[string]string{
+		"newsdata":   c.NewsDataAPIKey,
+		"gnews":      c.GNewsAPIKey,
+		"mediastack": c.MediastackAPIKey,
+		"rapidapi":   c.RapidAPIKey,
+	}
+}
+
+// ===============================
+// EXISTING RAPIDAPI-SPECIFIC HELPER FUNCTIONS
 // ===============================
 
 // GetRapidAPIConfig returns RapidAPI configuration
@@ -428,7 +554,7 @@ func getEnvAsFloat(key string, defaultValue float64) float64 {
 }
 
 // ===============================
-// NEW: RAPIDAPI HELPER FUNCTIONS
+// EXISTING RAPIDAPI HELPER FUNCTIONS - KEPT UNCHANGED
 // ===============================
 
 // parseRapidAPIEndpoints parses comma-separated RapidAPI endpoints from environment

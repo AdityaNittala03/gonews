@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +27,8 @@ import (
 type Services struct {
 	NewsAggregator *NewsAggregatorService
 	Auth           *AuthService // Keep existing auth service
-	// We'll add more services later (User, Cache, etc.)
+	Cache          *CacheService
+	// We'll add more services later (User, etc.)
 }
 
 // NewServices creates a new services container with enhanced news aggregation
@@ -36,9 +36,14 @@ func NewServices(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, cfg *config.C
 	// Create API client and quota manager
 	apiClient := NewAPIClient(cfg, log)
 	quotaManager := NewQuotaManager(cfg, sqlxDB, redis, log)
+	cacheService := NewCacheService(redis, cfg, log)
+
+	newsService := NewNewsAggregatorService(db, sqlxDB, redis, cfg, log, apiClient, quotaManager)
+	newsService.SetCacheService(cacheService)
 
 	return &Services{
-		NewsAggregator: NewNewsAggregatorService(db, sqlxDB, redis, cfg, log, apiClient, quotaManager),
+		NewsAggregator: newsService,
+		Cache:          cacheService,
 		// Auth: NewAuthService(...), // Initialize when needed
 	}
 }
@@ -47,7 +52,7 @@ func NewServices(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, cfg *config.C
 // NEWS AGGREGATION SERVICE
 // ===============================
 
-// NewsAggregatorService handles intelligent news aggregation with 15,000 daily requests
+// NewsAggregatorService handles intelligent news aggregation with live API integration
 type NewsAggregatorService struct {
 	// Database connections
 	db     *sql.DB
@@ -59,6 +64,7 @@ type NewsAggregatorService struct {
 	// Core services
 	apiClient    *APIClient
 	quotaManager *QuotaManager
+	cacheService *CacheService
 
 	// Content processing
 	deduplicator    *ContentDeduplicator
@@ -114,17 +120,383 @@ func NewNewsAggregatorService(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, 
 	// Start worker pool
 	service.startWorkers()
 
-	log.Info("News Aggregator Service initialized",
-		"workers", service.workers,
-		"total_daily_quota", cfg.GetTotalDailyQuota(),
-		"rapidapi_quota", cfg.GetPrimaryAPIQuota(),
-	)
+	log.Info("News Aggregator Service initialized", map[string]interface{}{
+		"workers": service.workers,
+		"quotas":  cfg.GetSimpleAPIQuotas(),
+	})
 
 	return service
 }
 
+// SetCacheService sets the cache service (called after cache service is created)
+func (s *NewsAggregatorService) SetCacheService(cache *CacheService) {
+	s.cacheService = cache
+}
+
 // ===============================
-// MAIN AGGREGATION METHODS
+// LIVE NEWS FETCHING METHODS
+// ===============================
+
+// FetchLatestNews fetches news from multiple APIs concurrently using live integration
+func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*models.Article, error) {
+	s.logger.Info("Starting live news fetch", map[string]interface{}{
+		"category": category,
+		"limit":    limit,
+	})
+
+	// Check cache first
+	if s.cacheService != nil {
+		cacheKey := fmt.Sprintf("news:%s:%d", category, limit)
+		if cachedArticles, found, err := s.cacheService.GetArticles(context.Background(), cacheKey, category); err == nil && found && len(cachedArticles) > 0 {
+			s.logger.Info("Returning cached news", map[string]interface{}{
+				"category": category,
+				"count":    len(cachedArticles),
+			})
+			// Convert []models.Article to []*models.Article
+			var articlePointers []*models.Article
+			for i := range cachedArticles {
+				articlePointers = append(articlePointers, &cachedArticles[i])
+			}
+			return articlePointers, nil
+		}
+	}
+
+	// Fetch from multiple APIs concurrently
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var allArticles []*models.Article
+	var errors []error
+
+	// Channel to collect results
+	resultChan := make(chan []*models.Article, 4)
+	errorChan := make(chan error, 4)
+
+	// NewsData.io (Primary source - 150/day)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if s.canMakeRequest("newsdata") {
+			articles, err := s.apiClient.FetchNewsFromNewsData(category, "in", limit/4)
+			if err != nil {
+				s.logger.Error("NewsData.io fetch failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				errorChan <- err
+			} else {
+				s.recordRequest("newsdata")
+				resultChan <- articles
+			}
+		} else {
+			s.logger.Warn("NewsData.io quota exhausted")
+		}
+	}()
+
+	// GNews (Secondary source - 75/day)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if s.canMakeRequest("gnews") {
+			articles, err := s.apiClient.FetchNewsFromGNews(category, "in", limit/4)
+			if err != nil {
+				s.logger.Error("GNews fetch failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				errorChan <- err
+			} else {
+				s.recordRequest("gnews")
+				resultChan <- articles
+			}
+		} else {
+			s.logger.Warn("GNews quota exhausted")
+		}
+	}()
+
+	// Mediastack (Backup source - 3/day, use sparingly)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if s.canMakeRequest("mediastack") {
+			articles, err := s.apiClient.FetchNewsFromMediastack(category, "in", limit/8)
+			if err != nil {
+				s.logger.Error("Mediastack fetch failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				errorChan <- err
+			} else {
+				s.recordRequest("mediastack")
+				resultChan <- articles
+			}
+		} else {
+			s.logger.Warn("Mediastack quota exhausted")
+		}
+	}()
+
+	// Global news for international perspective (25% of content)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if s.canMakeRequest("gnews") {
+			articles, err := s.apiClient.FetchNewsFromGNews(category, "", limit/8)
+			if err != nil {
+				s.logger.Error("Global news fetch failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				errorChan <- err
+			} else {
+				s.recordRequest("gnews")
+				resultChan <- articles
+			}
+		}
+	}()
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		close(errorChan)
+	}()
+
+	// Collect results
+	for articles := range resultChan {
+		mu.Lock()
+		allArticles = append(allArticles, articles...)
+		mu.Unlock()
+	}
+
+	// Collect errors
+	for err := range errorChan {
+		errors = append(errors, err)
+	}
+
+	if len(allArticles) == 0 {
+		if len(errors) > 0 {
+			return nil, fmt.Errorf("all API sources failed: %v", errors)
+		}
+		return nil, fmt.Errorf("no articles fetched from any source")
+	}
+
+	// Apply India-first content strategy
+	indianArticles, globalArticles := s.categorizeByOrigin(allArticles)
+
+	// Target: 75% Indian, 25% global
+	targetIndian := int(float64(limit) * 0.75)
+	targetGlobal := limit - targetIndian
+
+	finalArticles := []*models.Article{}
+
+	// Add Indian articles (up to target)
+	if len(indianArticles) >= targetIndian {
+		finalArticles = append(finalArticles, indianArticles[:targetIndian]...)
+	} else {
+		finalArticles = append(finalArticles, indianArticles...)
+		// Fill remaining with global articles
+		remaining := targetIndian - len(indianArticles)
+		if len(globalArticles) >= remaining {
+			finalArticles = append(finalArticles, globalArticles[:remaining]...)
+			globalArticles = globalArticles[remaining:]
+		} else {
+			finalArticles = append(finalArticles, globalArticles...)
+			globalArticles = []*models.Article{}
+		}
+	}
+
+	// Add global articles (up to remaining target)
+	if len(globalArticles) >= targetGlobal {
+		finalArticles = append(finalArticles, globalArticles[:targetGlobal]...)
+	} else {
+		finalArticles = append(finalArticles, globalArticles...)
+	}
+
+	// Deduplicate articles
+	deduplicatedArticles := s.deduplicateArticles(finalArticles)
+
+	// Cache the results
+	if s.cacheService != nil {
+		cacheKey := fmt.Sprintf("news:%s:%d", category, limit)
+		//ttl := s.getDynamicTTL(category)
+
+		// Convert []*models.Article to []models.Article for cache service
+		var articles []models.Article
+		for _, article := range deduplicatedArticles {
+			articles = append(articles, *article)
+		}
+
+		if err := s.cacheService.SetArticles(context.Background(), cacheKey, articles, category); err != nil {
+			s.logger.Error("Failed to cache news", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+
+	s.logger.Info("Successfully fetched and processed news", map[string]interface{}{
+		"category":        category,
+		"total_fetched":   len(allArticles),
+		"after_dedup":     len(deduplicatedArticles),
+		"indian_articles": len(indianArticles),
+		"global_articles": len(globalArticles),
+		"api_errors":      len(errors),
+	})
+
+	return deduplicatedArticles, nil
+}
+
+// FetchNewsByCategory fetches news for a specific category with India-first strategy
+func (s *NewsAggregatorService) FetchNewsByCategory(category string, limit int) ([]*models.Article, error) {
+	return s.FetchLatestNews(category, limit)
+}
+
+// SearchNews searches for news articles across all sources
+func (s *NewsAggregatorService) SearchNews(query string, category string, limit int) ([]*models.Article, error) {
+	s.logger.Info("Searching news", map[string]interface{}{
+		"query":    query,
+		"category": category,
+		"limit":    limit,
+	})
+
+	// For search, we'll use our existing methods but filter by query
+	// First get general articles
+	articles, err := s.FetchLatestNews(category, limit*2)
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter articles by query
+	filteredArticles := s.filterArticlesByQuery(articles, query)
+
+	// Limit results
+	if len(filteredArticles) > limit {
+		filteredArticles = filteredArticles[:limit]
+	}
+
+	return filteredArticles, nil
+}
+
+// GetTrendingNews fetches trending news with emphasis on Indian content
+func (s *NewsAggregatorService) GetTrendingNews(limit int) ([]*models.Article, error) {
+	// Trending typically means recent and popular
+	// We'll fetch from multiple sources and prioritize recent articles
+	return s.FetchLatestNews("general", limit)
+}
+
+// ===============================
+// QUOTA MANAGEMENT
+// ===============================
+
+// canMakeRequest checks if we can make a request to the given API source
+func (s *NewsAggregatorService) canMakeRequest(source string) bool {
+	remaining := s.apiClient.GetRemainingQuota()
+	return remaining[source] > 0
+}
+
+// recordRequest records that we made a request to the given API source
+func (s *NewsAggregatorService) recordRequest(source string) {
+	// The APIClient handles this internally
+	s.logger.Debug("Recorded API request", map[string]interface{}{
+		"source": source,
+	})
+}
+
+// ===============================
+// CONTENT PROCESSING
+// ===============================
+
+// categorizeByOrigin categorizes articles by origin (Indian vs Global)
+func (s *NewsAggregatorService) categorizeByOrigin(articles []*models.Article) ([]*models.Article, []*models.Article) {
+	var indianArticles, globalArticles []*models.Article
+
+	for _, article := range articles {
+		if article.IsIndianContent {
+			indianArticles = append(indianArticles, article)
+		} else {
+			globalArticles = append(globalArticles, article)
+		}
+	}
+
+	return indianArticles, globalArticles
+}
+
+// deduplicateArticles removes duplicate articles
+func (s *NewsAggregatorService) deduplicateArticles(articles []*models.Article) []*models.Article {
+	if len(articles) <= 1 {
+		return articles
+	}
+
+	seen := make(map[string]bool)
+	var deduplicated []*models.Article
+
+	for _, article := range articles {
+		// Create a unique key based on title and URL
+		key := strings.ToLower(article.Title) + "|" + article.URL
+
+		if !seen[key] {
+			seen[key] = true
+			deduplicated = append(deduplicated, article)
+		}
+	}
+
+	s.logger.Info("Deduplication completed", map[string]interface{}{
+		"original_count":     len(articles),
+		"deduplicated_count": len(deduplicated),
+		"removed_count":      len(articles) - len(deduplicated),
+	})
+
+	return deduplicated
+}
+
+// filterArticlesByQuery filters articles by search query
+func (s *NewsAggregatorService) filterArticlesByQuery(articles []*models.Article, query string) []*models.Article {
+	if query == "" {
+		return articles
+	}
+
+	queryLower := strings.ToLower(query)
+	var filtered []*models.Article
+
+	for _, article := range articles {
+		title := strings.ToLower(article.Title)
+		description := ""
+		if article.Description != nil {
+			description = strings.ToLower(*article.Description)
+		}
+
+		if strings.Contains(title, queryLower) || strings.Contains(description, queryLower) {
+			filtered = append(filtered, article)
+		}
+	}
+
+	return filtered
+}
+
+// getDynamicTTL returns dynamic TTL based on category and time
+func (s *NewsAggregatorService) getDynamicTTL(category string) int {
+	baseTTL := s.cfg.RedisTTLDefault
+
+	switch strings.ToLower(category) {
+	case "sports":
+		baseTTL = s.cfg.RedisTTLSports
+		if s.cfg.IsIPLTime() {
+			baseTTL = baseTTL / 2 // Reduce TTL during IPL time
+		}
+	case "finance", "business":
+		baseTTL = s.cfg.RedisTTLFinance
+		if s.cfg.IsMarketHours() {
+			baseTTL = baseTTL / 2 // Reduce TTL during market hours
+		}
+	case "technology":
+		baseTTL = s.cfg.RedisTTLTech
+	case "health":
+		baseTTL = s.cfg.RedisTTLHealth
+	default:
+		if s.cfg.IsBusinessHours() {
+			baseTTL = int(float64(baseTTL) * 0.75) // Slightly reduce during business hours
+		}
+	}
+
+	return baseTTL
+}
+
+// ===============================
+// LEGACY COMPREHENSIVE METHODS (PRESERVED)
 // ===============================
 
 // FetchAndCacheNews fetches news from all sources with intelligent orchestration
@@ -135,22 +507,22 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 	// Get IST time for optimization
 	istNow := time.Now().In(s.istLocation)
 
-	// Get category distribution for RapidAPI
-	categoryDistribution := models.GetRapidAPICategoryDistribution()
+	// Define categories to fetch
+	categories := []string{"general", "business", "sports", "technology", "health", "politics"}
 
 	// Channel for collecting results
-	resultsChan := make(chan CategoryResult, len(categoryDistribution))
+	resultsChan := make(chan CategoryResult, len(categories))
 	var wg sync.WaitGroup
 
 	// Fetch news for each category concurrently
-	for _, categoryDist := range categoryDistribution {
+	for _, category := range categories {
 		wg.Add(1)
-		go func(category models.CategoryRequestDistribution) {
+		go func(cat string) {
 			defer wg.Done()
 
-			result := s.fetchCategoryNewsIntelligent(ctx, category, istNow)
+			result := s.fetchCategoryNewsSimple(ctx, cat, istNow)
 			resultsChan <- result
-		}(categoryDist)
+		}(category)
 	}
 
 	// Wait for all category fetches to complete
@@ -160,7 +532,7 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 	}()
 
 	// Collect and aggregate results
-	var totalArticles []models.Article
+	var totalArticles []*models.Article
 	var totalFetched, totalProcessed, totalDuplicates int
 	var failedCategories []string
 
@@ -172,14 +544,27 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 			totalDuplicates += result.Duplicates
 		} else {
 			failedCategories = append(failedCategories, result.Category)
-			s.logger.Error("Category fetch failed", "category", result.Category, "error", result.Error)
+			s.logger.Error("Category fetch failed", map[string]interface{}{
+				"category": result.Category,
+				"error":    result.Error,
+			})
 		}
 	}
 
 	// Cache aggregated results
-	if len(totalArticles) > 0 {
-		if err := s.cacheAggregatedNews(ctx, totalArticles); err != nil {
-			s.logger.Error("Failed to cache aggregated news", "error", err)
+	if len(totalArticles) > 0 && s.cacheService != nil {
+		cacheKey := "news:all:aggregated"
+
+		// Convert []*models.Article to []models.Article for cache service
+		var articles []models.Article
+		for _, article := range totalArticles {
+			articles = append(articles, *article)
+		}
+
+		if err := s.cacheService.SetArticles(context.Background(), cacheKey, articles, "general"); err != nil {
+			s.logger.Error("Failed to cache aggregated news", map[string]interface{}{
+				"error": err.Error(),
+			})
 		}
 	}
 
@@ -189,348 +574,64 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 	s.aggregationMutex.Unlock()
 
 	duration := time.Since(startTime)
-	s.logger.Info("News aggregation completed",
-		"total_articles", len(totalArticles),
-		"total_fetched", totalFetched,
-		"total_processed", totalProcessed,
-		"duplicates_removed", totalDuplicates,
-		"failed_categories", len(failedCategories),
-		"duration", duration,
-	)
+	s.logger.Info("News aggregation completed", map[string]interface{}{
+		"total_articles":     len(totalArticles),
+		"total_fetched":      totalFetched,
+		"total_processed":    totalProcessed,
+		"duplicates_removed": totalDuplicates,
+		"failed_categories":  len(failedCategories),
+		"duration":           duration,
+	})
 
 	// Return error if too many categories failed
-	if len(failedCategories) > len(categoryDistribution)/2 {
+	if len(failedCategories) > len(categories)/2 {
 		return fmt.Errorf("too many categories failed: %v", failedCategories)
 	}
 
 	return nil
 }
 
-// FetchCategoryNews fetches news for a specific category with intelligent source selection
-func (s *NewsAggregatorService) FetchCategoryNews(ctx context.Context, category string) error {
-	startTime := time.Now()
-	s.logger.Info("Fetching category news", "category", category)
-
-	// Validate category
-	if !s.isValidCategory(category) {
-		return ErrInvalidCategory
-	}
-
-	// Determine if this should be Indian-focused content
-	isIndianFocus := s.isIndianFocusCategory(category)
-
-	// Request quota intelligently
-	quotaResponse, err := s.quotaManager.RequestQuotaIntelligent(ctx, category, isIndianFocus)
-	if err != nil {
-		return fmt.Errorf("quota request failed: %w", err)
-	}
-
-	if !quotaResponse.Approved {
-		s.logger.Warn("Quota not approved for category", "category", category, "reason", quotaResponse.Reason)
-		return ErrNoAPIQuotaAvailable
-	}
-
-	// Build API request
-	apiRequest := APIRequest{
-		Source:   quotaResponse.Source,
-		Category: category,
-		Country:  s.getCountryForCategory(category),
-		Language: "en",
-		PageSize: s.getPageSizeForCategory(category),
-		Page:     1,
-		Query:    s.buildQueryForCategory(category, isIndianFocus),
-	}
-
-	// Fetch news using approved source
-	response, err := s.apiClient.FetchNewsIntelligent(ctx, apiRequest)
-	if err != nil {
-		return fmt.Errorf("failed to fetch news for category %s: %w", category, err)
-	}
-
-	if len(response.Articles) == 0 {
-		s.logger.Warn("No articles returned for category", "category", category)
-		return nil
-	}
-
-	// Process articles
-	processedArticles := s.processArticles(response.Articles, category, quotaResponse.Source)
-
-	// Store in database
-	savedCount, err := s.saveArticlesToDatabase(ctx, processedArticles)
-	if err != nil {
-		s.logger.Error("Failed to save articles", "error", err)
-	}
-
-	// Cache results
-	cacheKey := fmt.Sprintf("gonews:category:%s", category)
-	if err := s.cacheArticles(ctx, cacheKey, processedArticles, category); err != nil {
-		s.logger.Error("Failed to cache category articles", "category", category, "error", err)
-	}
-
-	duration := time.Since(startTime)
-	s.logger.Info("Category news fetch completed",
-		"category", category,
-		"source", quotaResponse.Source,
-		"fetched", len(response.Articles),
-		"processed", len(processedArticles),
-		"saved", savedCount,
-		"duration", duration,
-	)
-
-	return nil
-}
-
-// ===============================
-// INTELLIGENT FETCHING METHODS
-// ===============================
-
-// fetchCategoryNewsIntelligent fetches news for a category with full intelligence
-func (s *NewsAggregatorService) fetchCategoryNewsIntelligent(ctx context.Context, categoryDist models.CategoryRequestDistribution, istTime time.Time) CategoryResult {
+// fetchCategoryNewsSimple fetches news for a category using simple method
+func (s *NewsAggregatorService) fetchCategoryNewsSimple(ctx context.Context, category string, istTime time.Time) CategoryResult {
 	result := CategoryResult{
-		Category:  categoryDist.CategoryName,
+		Category:  category,
 		Success:   false,
 		StartTime: time.Now(),
 	}
 
-	// Determine request strategy based on IST time and category
-	requestStrategy := s.determineRequestStrategy(categoryDist, istTime)
-
-	// Calculate requests to make for this category
-	requestsToMake := s.calculateCategoryRequests(categoryDist, requestStrategy)
-
-	var allArticles []models.Article
-	var totalFetched int
-
-	// Make multiple requests if needed (for high-volume categories)
-	for i := 0; i < requestsToMake; i++ {
-		// Build request with variations
-		apiRequest := s.buildIntelligentAPIRequest(categoryDist, i, requestStrategy)
-
-		// Request quota
-		quotaResponse, err := s.quotaManager.RequestQuotaIntelligent(ctx, categoryDist.CategoryName, categoryDist.IsIndianFocus)
-		if err != nil || !quotaResponse.Approved {
-			s.logger.Warn("Quota not available for category request",
-				"category", categoryDist.CategoryName,
-				"request_num", i+1,
-				"reason", quotaResponse.Reason,
-			)
-			break // Stop making requests for this category
-		}
-
-		// Update request with approved source
-		apiRequest.Source = quotaResponse.Source
-
-		// Fetch news
-		response, err := s.apiClient.FetchNewsIntelligent(ctx, apiRequest)
-		if err != nil {
-			s.logger.Error("API request failed",
-				"category", categoryDist.CategoryName,
-				"source", quotaResponse.Source,
-				"error", err,
-			)
-			continue // Try next request
-		}
-
-		// Process articles
-		processedArticles := s.processArticles(response.Articles, categoryDist.CategoryName, quotaResponse.Source)
-		allArticles = append(allArticles, processedArticles...)
-		totalFetched += len(response.Articles)
-
-		// Small delay between requests to be respectful
-		time.Sleep(100 * time.Millisecond)
+	// Fetch news using our live method
+	articles, err := s.FetchLatestNews(category, 20)
+	if err != nil {
+		result.Error = err
+		result.Duration = time.Since(result.StartTime)
+		return result
 	}
 
-	// Deduplicate articles within category
-	deduplicatedArticles := s.deduplicator.DeduplicateArticles(allArticles)
-	duplicatesRemoved := len(allArticles) - len(deduplicatedArticles)
-
-	// Sort by relevance and recency
-	sortedArticles := s.sortArticlesByRelevance(deduplicatedArticles, categoryDist.IsIndianFocus)
-
-	result.Articles = sortedArticles
-	result.TotalFetched = totalFetched
-	result.TotalProcessed = len(sortedArticles)
-	result.Duplicates = duplicatesRemoved
-	result.Success = len(sortedArticles) > 0
+	result.Articles = articles
+	result.TotalFetched = len(articles)
+	result.TotalProcessed = len(articles)
+	result.Duplicates = 0 // Already deduplicated in FetchLatestNews
+	result.Success = len(articles) > 0
 	result.Duration = time.Since(result.StartTime)
-
-	if !result.Success {
-		result.Error = fmt.Errorf("no articles processed for category %s", categoryDist.CategoryName)
-	}
 
 	return result
 }
 
 // ===============================
-// CONTENT PROCESSING
-// ===============================
-
-// processArticles processes raw articles into our internal format
-func (s *NewsAggregatorService) processArticles(externalArticles []models.ExternalArticle, category string, source models.APISourceType) []models.Article {
-	var processedArticles []models.Article
-
-	for _, ext := range externalArticles {
-		// Skip articles with missing essential data
-		if ext.Title == "" || ext.URL == "" {
-			continue
-		}
-
-		// Convert to internal article format
-		article := models.Article{
-			ExternalID:  ext.ID,
-			Title:       strings.TrimSpace(ext.Title),
-			Description: s.cleanDescription(ext.Description),
-			Content:     s.cleanContent(ext.Content),
-			URL:         ext.URL,
-			ImageURL:    ext.ImageURL,
-			Source:      ext.Source,
-			Author:      ext.Author,
-			PublishedAt: ext.PublishedAt,
-			FetchedAt:   time.Now(),
-		}
-
-		// Content analysis
-		desc := ""
-		if article.Description != nil {
-			desc = *article.Description
-		}
-		article.IsIndianContent = s.contentAnalyzer.IsIndianContent(article.Title, desc, article.Source)
-		article.RelevanceScore = s.contentAnalyzer.CalculateRelevanceScore(article.Title, desc, category)
-		article.SentimentScore = s.contentAnalyzer.AnalyzeSentiment(article.Title, desc)
-
-		// Content metrics
-		article.WordCount = s.calculateWordCount(article.Content)
-		article.ReadingTimeMinutes = s.calculateReadingTime(article.WordCount)
-
-		// Set category
-		categoryID := s.getCategoryIDByName(category)
-		if categoryID > 0 {
-			article.CategoryID = &categoryID
-		}
-
-		// Content flags
-		article.IsActive = true
-		article.IsFeatured = s.shouldFeatureArticle(article)
-
-		processedArticles = append(processedArticles, article)
-	}
-
-	return processedArticles
-}
-
-// ===============================
-// HELPER METHODS
-// ===============================
-
-// isValidCategory checks if the category is valid
-func (s *NewsAggregatorService) isValidCategory(category string) bool {
-	validCategories := []string{
-		"general", "business", "entertainment", "health", "science",
-		"sports", "technology", "politics", "breaking", "regional",
-	}
-
-	for _, valid := range validCategories {
-		if category == valid {
-			return true
-		}
-	}
-	return false
-}
-
-// isIndianFocusCategory determines if a category should focus on Indian content
-func (s *NewsAggregatorService) isIndianFocusCategory(category string) bool {
-	indianFocusCategories := []string{
-		"politics", "business", "sports", "regional", "breaking",
-	}
-
-	for _, focus := range indianFocusCategories {
-		if category == focus {
-			return true
-		}
-	}
-	return false
-}
-
-// getCountryForCategory returns the appropriate country code for the category
-func (s *NewsAggregatorService) getCountryForCategory(category string) string {
-	if s.isIndianFocusCategory(category) {
-		return "in" // India
-	}
-	return "" // Global
-}
-
-// buildQueryForCategory builds search query for the category
-func (s *NewsAggregatorService) buildQueryForCategory(category string, isIndian bool) string {
-	baseQueries := map[string]string{
-		"politics":      "politics government policy election",
-		"business":      "business economy finance market",
-		"sports":        "sports cricket ipl football",
-		"technology":    "technology tech innovation software",
-		"health":        "health healthcare medical",
-		"entertainment": "entertainment movies bollywood",
-		"breaking":      "breaking news urgent",
-		"regional":      "regional local state",
-	}
-
-	query := baseQueries[category]
-	if query == "" {
-		query = category
-	}
-
-	// Add Indian context for Indian-focused content
-	if isIndian {
-		switch category {
-		case "politics":
-			query += " india modi bjp congress"
-		case "business":
-			query += " india rupee sensex nifty"
-		case "sports":
-			query += " india cricket ipl bcci"
-		case "technology":
-			query += " india startup tech bangalore"
-		}
-	}
-
-	return query
-}
-
-// getPageSizeForCategory returns appropriate page size for category
-func (s *NewsAggregatorService) getPageSizeForCategory(category string) int {
-	// Higher page sizes for important categories
-	switch category {
-	case "breaking", "politics", "business":
-		return 50
-	case "sports", "technology":
-		return 30
-	default:
-		return 20
-	}
-}
-
-// ===============================
-// SUPPORTING STRUCTS & METHODS
+// SUPPORTING STRUCTS & HELPER METHODS
 // ===============================
 
 // CategoryResult represents the result of fetching news for a category
 type CategoryResult struct {
-	Category       string           `json:"category"`
-	Articles       []models.Article `json:"articles"`
-	TotalFetched   int              `json:"total_fetched"`
-	TotalProcessed int              `json:"total_processed"`
-	Duplicates     int              `json:"duplicates"`
-	Success        bool             `json:"success"`
-	Error          error            `json:"error,omitempty"`
-	StartTime      time.Time        `json:"start_time"`
-	Duration       time.Duration    `json:"duration"`
-}
-
-// RequestStrategy represents the strategy for making API requests
-type RequestStrategy struct {
-	Priority        int    `json:"priority"`
-	RequestsPerHour int    `json:"requests_per_hour"`
-	IsPeakTime      bool   `json:"is_peak_time"`
-	IsEventTime     bool   `json:"is_event_time"`
-	TimeCategory    string `json:"time_category"` // "market", "ipl", "business", "off-peak"
+	Category       string            `json:"category"`
+	Articles       []*models.Article `json:"articles"`
+	TotalFetched   int               `json:"total_fetched"`
+	TotalProcessed int               `json:"total_processed"`
+	Duplicates     int               `json:"duplicates"`
+	Success        bool              `json:"success"`
+	Error          error             `json:"error,omitempty"`
+	StartTime      time.Time         `json:"start_time"`
+	Duration       time.Duration     `json:"duration"`
 }
 
 // ContentDeduplicator handles duplicate detection
@@ -565,11 +666,11 @@ func NewContentAnalyzer(cfg *config.Config, log *logger.Logger) *ContentAnalyzer
 }
 
 // DeduplicateArticles removes duplicate articles
-func (cd *ContentDeduplicator) DeduplicateArticles(articles []models.Article) []models.Article {
+func (cd *ContentDeduplicator) DeduplicateArticles(articles []*models.Article) []*models.Article {
 	cd.mutex.Lock()
 	defer cd.mutex.Unlock()
 
-	var uniqueArticles []models.Article
+	var uniqueArticles []*models.Article
 	seenTitles := make(map[string]bool)
 	seenURLs := make(map[string]bool)
 
@@ -589,11 +690,11 @@ func (cd *ContentDeduplicator) DeduplicateArticles(articles []models.Article) []
 		uniqueArticles = append(uniqueArticles, article)
 	}
 
-	cd.logger.Info("Deduplication completed",
-		"original_count", len(articles),
-		"unique_count", len(uniqueArticles),
-		"duplicates_removed", len(articles)-len(uniqueArticles),
-	)
+	cd.logger.Info("Deduplication completed", map[string]interface{}{
+		"original_count":     len(articles),
+		"unique_count":       len(uniqueArticles),
+		"duplicates_removed": len(articles) - len(uniqueArticles),
+	})
 
 	return uniqueArticles
 }
@@ -610,7 +711,20 @@ func (cd *ContentDeduplicator) generateTitleHash(title string) string {
 
 // IsIndianContent determines if content is Indian-focused
 func (ca *ContentAnalyzer) IsIndianContent(title, description, source string) bool {
-	return models.IsIndianContentByKeywords(title, description, source)
+	content := strings.ToLower(title + " " + description + " " + source)
+	indianTerms := []string{
+		"india", "indian", "delhi", "mumbai", "bangalore", "chennai", "kolkata", "hyderabad",
+		"rupee", "modi", "bjp", "congress", "bollywood", "cricket", "ipl", "bcci",
+		"sensex", "nifty", "rbi", "isro", "drdo", "aiims", "iit", "neet",
+		"karnataka", "maharashtra", "tamil nadu", "west bengal", "rajasthan", "gujarat",
+	}
+
+	for _, term := range indianTerms {
+		if strings.Contains(content, term) {
+			return true
+		}
+	}
+	return false
 }
 
 // CalculateRelevanceScore calculates content relevance score
@@ -674,132 +788,15 @@ func (ca *ContentAnalyzer) AnalyzeSentiment(title, description string) float64 {
 }
 
 // ===============================
-// ADDITIONAL HELPER METHODS
+// WORKER POOL & UTILITY METHODS
 // ===============================
-
-// determineRequestStrategy determines the optimal request strategy
-func (s *NewsAggregatorService) determineRequestStrategy(categoryDist models.CategoryRequestDistribution, istTime time.Time) RequestStrategy {
-	//hour := istTime.Hour()
-
-	strategy := RequestStrategy{
-		Priority:        1,
-		RequestsPerHour: categoryDist.RequestsPerDay / 24,
-		IsPeakTime:      models.IsBusinessHours(),
-		IsEventTime:     false,
-		TimeCategory:    "regular",
-	}
-
-	// Adjust for market hours
-	if models.IsMarketHours() && (categoryDist.CategoryName == "business" || categoryDist.CategoryName == "politics") {
-		strategy.RequestsPerHour = int(float64(strategy.RequestsPerHour) * 1.5)
-		strategy.IsEventTime = true
-		strategy.TimeCategory = "market"
-	}
-
-	// Adjust for IPL time
-	if models.IsIPLTime() && categoryDist.CategoryName == "sports" {
-		strategy.RequestsPerHour = int(float64(strategy.RequestsPerHour) * 2.0)
-		strategy.IsEventTime = true
-		strategy.TimeCategory = "ipl"
-	}
-
-	return strategy
-}
-
-// calculateCategoryRequests calculates how many requests to make for a category
-func (s *NewsAggregatorService) calculateCategoryRequests(categoryDist models.CategoryRequestDistribution, strategy RequestStrategy) int {
-	// Base calculation: requests per day / 24 hours
-	baseRequests := categoryDist.RequestsPerDay / 24
-
-	// Adjust based on current time and strategy
-	if strategy.IsEventTime {
-		return baseRequests * 2 // Double during event times
-	} else if strategy.IsPeakTime {
-		return int(float64(baseRequests) * 1.3) // 30% more during peak
-	}
-
-	return baseRequests
-}
-
-// buildIntelligentAPIRequest builds an API request with intelligence
-func (s *NewsAggregatorService) buildIntelligentAPIRequest(categoryDist models.CategoryRequestDistribution, requestNum int, strategy RequestStrategy) APIRequest {
-	baseQuery := s.buildQueryForCategory(categoryDist.CategoryName, categoryDist.IsIndianFocus)
-
-	// Vary queries for multiple requests
-	if requestNum > 0 {
-		variations := []string{" latest", " news", " update", " today"}
-		if requestNum < len(variations) {
-			baseQuery += variations[requestNum]
-		}
-	}
-
-	return APIRequest{
-		Category: categoryDist.CategoryName,
-		Query:    baseQuery,
-		Country:  s.getCountryForCategory(categoryDist.CategoryName),
-		Language: "en",
-		PageSize: s.getPageSizeForCategory(categoryDist.CategoryName),
-		Page:     requestNum + 1,
-	}
-}
-
-// sortArticlesByRelevance sorts articles by relevance and recency
-func (s *NewsAggregatorService) sortArticlesByRelevance(articles []models.Article, isIndianFocus bool) []models.Article {
-	sort.Slice(articles, func(i, j int) bool {
-		// Prioritize Indian content if this is Indian-focused category
-		if isIndianFocus {
-			if articles[i].IsIndianContent && !articles[j].IsIndianContent {
-				return true
-			}
-			if !articles[i].IsIndianContent && articles[j].IsIndianContent {
-				return false
-			}
-		}
-
-		// Then sort by relevance score
-		if articles[i].RelevanceScore != articles[j].RelevanceScore {
-			return articles[i].RelevanceScore > articles[j].RelevanceScore
-		}
-
-		// Finally by recency
-		return articles[i].PublishedAt.After(articles[j].PublishedAt)
-	})
-
-	return articles
-}
-
-// Additional utility methods (simplified for length)
-func (s *NewsAggregatorService) cleanDescription(desc *string) *string { return desc }
-func (s *NewsAggregatorService) cleanContent(content *string) *string  { return content }
-func (s *NewsAggregatorService) calculateWordCount(content *string) int {
-	if content == nil {
-		return 0
-	}
-	return len(strings.Fields(*content))
-}
-func (s *NewsAggregatorService) calculateReadingTime(wordCount int) int  { return wordCount / 200 }
-func (s *NewsAggregatorService) getCategoryIDByName(category string) int { return 1 } // Placeholder
-func (s *NewsAggregatorService) shouldFeatureArticle(article models.Article) bool {
-	return article.RelevanceScore > 0.8
-}
 
 // Worker pool management
 func (s *NewsAggregatorService) startWorkers() {
 	// Worker pool implementation (simplified)
-	s.logger.Info("News aggregation workers started", "count", s.workers)
-}
-
-// Caching methods (simplified)
-func (s *NewsAggregatorService) cacheAggregatedNews(ctx context.Context, articles []models.Article) error {
-	return nil
-}
-func (s *NewsAggregatorService) cacheArticles(ctx context.Context, key string, articles []models.Article, category string) error {
-	return nil
-}
-
-// Database methods (simplified)
-func (s *NewsAggregatorService) saveArticlesToDatabase(ctx context.Context, articles []models.Article) (int, error) {
-	return len(articles), nil
+	s.logger.Info("News aggregation workers started", map[string]interface{}{
+		"count": s.workers,
+	})
 }
 
 // Close gracefully shuts down the service

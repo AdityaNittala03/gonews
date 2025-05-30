@@ -25,42 +25,89 @@ import (
 func main() {
 	// Initialize logger
 	logger := appLogger.NewLogger()
-	logger.Info("Starting GoNews server", "version", "1.0.0")
+	logger.Info("Starting GoNews server", map[string]interface{}{
+		"version":    "1.0.0",
+		"phase":      "2 - Backend Development",
+		"checkpoint": "4 - External API Integration",
+	})
 
-	// Load configuration - assuming it returns just config
-	cfg := config.Load()
-	fmt.Printf("DATABASE_URL: %s\n", cfg.DatabaseURL)
+	// Load configuration - fix to handle error return
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("Failed to load configuration", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
 
-	// Initialize database connections - try common function names
+	// Validate API keys
+	missingKeys := cfg.ValidateAPIKeys()
+	if len(missingKeys) > 0 {
+		logger.Warn("Some API keys are missing", map[string]interface{}{
+			"missing_keys": missingKeys,
+		})
+	}
+
+	logger.Info("Configuration loaded", map[string]interface{}{
+		"port":        cfg.Port,
+		"environment": cfg.Environment,
+		"timezone":    cfg.Timezone,
+		"api_quotas":  cfg.GetSimpleAPIQuotas(),
+	})
+
+	// Initialize database connections
 	logger.Info("Connecting to databases...")
 
 	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
-		logger.Error("Failed to connect to PostgreSQL", "error", err)
+		logger.Error("Failed to connect to PostgreSQL", map[string]interface{}{
+			"error": err.Error(),
+		})
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	// NO NEED TO WRAP - db is already *sqlx.DB
+	// Test database connection
+	if err := db.Ping(); err != nil {
+		logger.Error("Database ping failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
 
 	rdb := database.ConnectRedis(cfg.RedisURL)
 	if rdb == nil {
-		logger.Error("Failed to connect to Redis", "error", "nil connection")
+		logger.Error("Failed to connect to Redis", map[string]interface{}{
+			"error": "nil connection",
+		})
 		os.Exit(1)
 	}
 	defer rdb.Close()
 
+	// Test Redis connection
+	ctx := context.Background()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.Error("Redis ping failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
+
 	// Run database migrations
 	logger.Info("Running database migrations...")
 	if err := database.Migrate(db); err != nil {
-		logger.Error("Failed to run database migrations", "error", err)
+		logger.Error("Failed to run database migrations", map[string]interface{}{
+			"error": err.Error(),
+		})
 		os.Exit(1)
 	}
 	logger.Info("Database migrations completed successfully")
 
 	// Initialize JWT manager
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
-	logger.Info("JWT manager initialized")
+	logger.Info("JWT manager initialized", map[string]interface{}{
+		"expiration_hours": cfg.JWTExpirationHours,
+	})
 
 	// Create Fiber app with configuration
 	app := fiber.New(fiber.Config{
@@ -68,18 +115,23 @@ func main() {
 		ServerHeader:  "GoNews",
 		StrictRouting: true,
 		CaseSensitive: true,
+		ReadTimeout:   30 * time.Second,
+		WriteTimeout:  30 * time.Second,
+		IdleTimeout:   60 * time.Second,
+		BodyLimit:     4 * 1024 * 1024, // 4MB
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			code := fiber.StatusInternalServerError
 			if e, ok := err.(*fiber.Error); ok {
 				code = e.Code
 			}
 
-			logger.Error("Request error",
-				"method", c.Method(),
-				"path", c.Path(),
-				"error", err.Error(),
-				"status", code,
-			)
+			logger.Error("Request error", map[string]interface{}{
+				"method": c.Method(),
+				"path":   c.Path(),
+				"error":  err.Error(),
+				"status": code,
+				"ip":     c.IP(),
+			})
 
 			return c.Status(code).JSON(fiber.Map{
 				"error":   "request_failed",
@@ -97,13 +149,14 @@ func main() {
 		XFrameOptions:      "DENY",
 		HSTSMaxAge:         31536000,
 		ReferrerPolicy:     "strict-origin-when-cross-origin",
+		PermissionPolicy:   "camera=(), microphone=(), geolocation=()",
 	}))
 
 	// CORS middleware - configure for your frontend
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,https://yourdomain.com", // Update with your frontend URLs
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Requested-With",
+		AllowOrigins:     "http://localhost:3000,https://yourdomain.com,http://localhost:8080", // Include backend for testing
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-API-Key",
 		AllowCredentials: true,
 		MaxAge:           86400, // 24 hours
 	}))
@@ -113,20 +166,27 @@ func main() {
 		Format:     "${time} | ${status} | ${latency} | ${ip} | ${method} | ${path} | ${error}\n",
 		TimeFormat: "2006-01-02 15:04:05",
 		TimeZone:   "Asia/Kolkata", // IST timezone
+		Output:     os.Stdout,
 	}))
 
-	// Rate limiting middleware
+	// Rate limiting middleware - more generous for API integration
 	app.Use(limiter.New(limiter.Config{
-		Max:        100,             // 100 requests
+		Max:        200,             // 200 requests (increased for API testing)
 		Expiration: 1 * time.Minute, // per minute
 		KeyGenerator: func(c *fiber.Ctx) string {
 			// Use IP for rate limiting
 			return c.IP()
 		},
 		LimitReached: func(c *fiber.Ctx) error {
+			logger.Warn("Rate limit exceeded", map[string]interface{}{
+				"ip":     c.IP(),
+				"path":   c.Path(),
+				"method": c.Method(),
+			})
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error":   "rate_limit_exceeded",
-				"message": "Too many requests. Please try again later.",
+				"error":       "rate_limit_exceeded",
+				"message":     "Too many requests. Please try again later.",
+				"retry_after": "60 seconds",
 			})
 		},
 	}))
@@ -136,7 +196,7 @@ func main() {
 		EnableStackTrace: cfg.Environment == "development",
 	}))
 
-	// Setup routes - UPDATED TO PASS ADDITIONAL PARAMETERS
+	// Setup routes with all required parameters
 	routes.SetupRoutes(app, db, jwtManager, cfg, logger, rdb)
 
 	// Setup graceful shutdown
@@ -152,25 +212,39 @@ func main() {
 		defer cancel()
 
 		if err := app.ShutdownWithContext(ctx); err != nil {
-			logger.Error("Server forced to shutdown", "error", err)
+			logger.Error("Server forced to shutdown", map[string]interface{}{
+				"error": err.Error(),
+			})
 		}
 
 		logger.Info("Server shutdown complete")
 	}()
 
-	// Start server
+	// Print startup summary
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	logger.Info("Starting GoNews server",
-		"port", cfg.Port,
-		"env", cfg.Environment,
-		"database", "PostgreSQL connected",
-		"cache", "Redis connected",
-		"auth", "JWT enabled",
-		"news_system", "enabled", // NEW
-	)
+	logger.Info("🚀 GoNews server starting", map[string]interface{}{
+		"address":        addr,
+		"port":           cfg.Port,
+		"environment":    cfg.Environment,
+		"timezone":       cfg.Timezone,
+		"database":       "PostgreSQL connected ✅",
+		"cache":          "Redis connected ✅",
+		"authentication": "JWT enabled ✅",
+		"news_apis": map[string]interface{}{
+			"newsdata":   fmt.Sprintf("%d/day", cfg.NewsDataQuota),
+			"gnews":      fmt.Sprintf("%d/day", cfg.GNewsQuota),
+			"mediastack": fmt.Sprintf("%d/day", cfg.MediastackQuota),
+			"rapidapi":   fmt.Sprintf("%d/day", cfg.RapidAPIQuota),
+		},
+		"live_integration": "External APIs enabled ✅",
+		"india_strategy":   "75% Indian, 25% Global content ✅",
+	})
 
+	// Start server
 	if err := app.Listen(addr); err != nil {
-		logger.Error("Server failed to start", "error", err)
+		logger.Error("Server failed to start", map[string]interface{}{
+			"error": err.Error(),
+		})
 		os.Exit(1)
 	}
 }
