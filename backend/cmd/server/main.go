@@ -41,6 +41,8 @@ func main() {
 	}
 	defer db.Close()
 
+	// NO NEED TO WRAP - db is already *sqlx.DB
+
 	rdb := database.ConnectRedis(cfg.RedisURL)
 	if rdb == nil {
 		logger.Error("Failed to connect to Redis", "error", "nil connection")
@@ -134,8 +136,8 @@ func main() {
 		EnableStackTrace: cfg.Environment == "development",
 	}))
 
-	// Setup routes
-	routes.SetupRoutes(app, db, jwtManager)
+	// Setup routes - UPDATED TO PASS ADDITIONAL PARAMETERS
+	routes.SetupRoutes(app, db, jwtManager, cfg, logger, rdb)
 
 	// Setup graceful shutdown
 	c := make(chan os.Signal, 1)
@@ -164,6 +166,7 @@ func main() {
 		"database", "PostgreSQL connected",
 		"cache", "Redis connected",
 		"auth", "JWT enabled",
+		"news_system", "enabled", // NEW
 	)
 
 	if err := app.Listen(addr); err != nil {

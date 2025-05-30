@@ -3,24 +3,40 @@ package routes
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
+	"github.com/redis/go-redis/v9"
 
 	"backend/internal/auth"
+	"backend/internal/config"
 	"backend/internal/handlers"
 	"backend/internal/middleware"
 	"backend/internal/repository"
 	"backend/internal/services"
+	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes
-func SetupRoutes(app *fiber.App, db *sqlx.DB, jwtManager *auth.JWTManager) {
+// SetupRoutes configures all application routes - UPDATED SIGNATURE
+func SetupRoutes(app *fiber.App, db *sqlx.DB, jwtManager *auth.JWTManager, cfg *config.Config, log *logger.Logger, rdb *redis.Client) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 
 	// Initialize services
 	authService := services.NewAuthService(userRepo, jwtManager)
 
+	// Initialize news services - CORRECTED PARAMETERS
+	cacheService := services.NewCacheService(rdb, cfg, log)
+
+	// For NewsAggregatorService, we need to create the additional dependencies first
+	apiClient := services.NewAPIClient(cfg, log)
+	quotaManager := services.NewQuotaManager(cfg, db, rdb, log)
+
+	// Get the underlying *sql.DB from *sqlx.DB
+	sqlDB := db.DB
+
+	newsService := services.NewNewsAggregatorService(sqlDB, db, rdb, cfg, log, apiClient, quotaManager)
+
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
+	newsHandler := handlers.NewNewsHandler(newsService, cacheService, cfg, log)
 
 	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -40,6 +56,12 @@ func SetupRoutes(app *fiber.App, db *sqlx.DB, jwtManager *auth.JWTManager) {
 	// Authentication routes
 	setupAuthRoutes(api, authHandler, jwtManager)
 
+	// News routes - NEW IMPLEMENTATION
+	setupNewsRoutes(api, newsHandler, jwtManager)
+
+	// News health routes - NEW
+	setupNewsHealthRoutes(app, newsHandler)
+
 	// Protected routes (require authentication)
 	setupProtectedRoutes(api, jwtManager)
 }
@@ -53,10 +75,10 @@ func setupPublicRoutes(api fiber.Router) {
 			"status":      "operational",
 			"features": fiber.Map{
 				"authentication":   true,
-				"news_aggregation": false, // Will be true after implementation
+				"news_aggregation": true, // NOW TRUE!
 				"user_profiles":    true,
-				"bookmarks":        false, // Will be true after implementation
-				"search":           false, // Will be true after implementation
+				"bookmarks":        true, // NOW TRUE!
+				"search":           true, // NOW TRUE!
 			},
 		})
 	})
@@ -92,6 +114,106 @@ func setupAuthRoutes(api fiber.Router, authHandler *handlers.AuthHandler, jwtMan
 	authProtected.Delete("/account", authHandler.DeactivateAccount)
 }
 
+// setupNewsRoutes configures all news-related routes - NEW IMPLEMENTATION
+func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtManager *auth.JWTManager) {
+	// Create news API group
+	news := api.Group("/news")
+
+	// ===============================
+	// PUBLIC NEWS ENDPOINTS (No authentication required)
+	// ===============================
+
+	// Main news feed
+	news.Get("/", newsHandler.GetNewsFeed)
+
+	// Category-specific news
+	news.Get("/category/:category", newsHandler.GetCategoryNews)
+
+	// Search news articles
+	news.Get("/search", newsHandler.SearchNews)
+
+	// Get trending news
+	news.Get("/trending", newsHandler.GetTrendingNews)
+
+	// Get available categories
+	news.Get("/categories", newsHandler.GetCategories)
+
+	// Get news statistics
+	news.Get("/stats", newsHandler.GetNewsStats)
+
+	// ===============================
+	// MIXED AUTH ENDPOINTS (Work with both auth/unauth users)
+	// ===============================
+
+	// Bookmarks (demo for unauth, real for auth)
+	news.Get("/bookmarks", func(c *fiber.Ctx) error {
+		// Apply optional auth middleware
+		middleware.OptionalAuthMiddleware(jwtManager)(c)
+
+		if middleware.IsAuthenticated(c) {
+			return newsHandler.GetUserBookmarks(c)
+		}
+		return newsHandler.GetDemoBookmarks(c)
+	})
+
+	// Track article read (works for both)
+	news.Post("/read", func(c *fiber.Ctx) error {
+		middleware.OptionalAuthMiddleware(jwtManager)(c)
+		return newsHandler.TrackArticleRead(c)
+	})
+
+	// Personalized feed (smart fallback)
+	news.Get("/personalized", func(c *fiber.Ctx) error {
+		middleware.OptionalAuthMiddleware(jwtManager)(c)
+
+		if middleware.IsAuthenticated(c) {
+			return newsHandler.GetPersonalizedFeed(c)
+		}
+		return newsHandler.GetIndiaFocusedFeed(c)
+	})
+
+	// ===============================
+	// AUTHENTICATED ENDPOINTS (JWT required)
+	// ===============================
+
+	// Create authenticated sub-group
+	authNews := news.Use(middleware.AuthMiddleware(jwtManager))
+
+	// Manual news refresh
+	authNews.Post("/refresh", newsHandler.RefreshNews)
+
+	// User bookmarks management
+	authNews.Post("/bookmarks", newsHandler.AddBookmark)
+	authNews.Delete("/bookmarks/:id", newsHandler.RemoveBookmark)
+
+	// User reading history
+	authNews.Get("/history", newsHandler.GetReadingHistory)
+
+	// ===============================
+	// ADMIN ENDPOINTS (Admin role required)
+	// ===============================
+
+	// Create admin sub-group
+	adminNews := authNews.Use(middleware.AdminMiddleware())
+
+	// Admin management endpoints
+	adminNews.Get("/admin/detailed-stats", newsHandler.GetDetailedStats)
+	adminNews.Post("/admin/refresh-category/:category", newsHandler.RefreshCategory)
+	adminNews.Post("/admin/clear-cache", newsHandler.ClearCache)
+	adminNews.Get("/admin/api-usage", newsHandler.GetAPIUsageAnalytics)
+	adminNews.Post("/admin/update-quotas", newsHandler.UpdateQuotaLimits)
+}
+
+// setupNewsHealthRoutes sets up health check endpoints separately - NEW FUNCTION
+func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
+	// Health check endpoints
+	app.Get("/health/news", newsHandler.HealthCheck)
+	app.Get("/health/news/detailed", newsHandler.DetailedHealthCheck)
+	app.Get("/health/news/cache", newsHandler.CacheHealthCheck)
+	app.Get("/health/news/api-sources", newsHandler.APISourcesHealthCheck)
+	app.Get("/health/news/database", newsHandler.DatabaseHealthCheck)
+}
+
 // setupProtectedRoutes configures routes that require authentication
 func setupProtectedRoutes(api fiber.Router, jwtManager *auth.JWTManager) {
 	// Protected routes group - requires authentication
@@ -100,14 +222,8 @@ func setupProtectedRoutes(api fiber.Router, jwtManager *auth.JWTManager) {
 	// User-specific routes
 	setupUserRoutes(protected)
 
-	// News routes (placeholder for future implementation)
-	setupNewsRoutes(protected)
-
-	// Bookmark routes (placeholder for future implementation)
-	setupBookmarkRoutes(protected)
-
-	// Search routes (placeholder for future implementation)
-	setupSearchRoutes(protected)
+	// Legacy placeholder routes (kept for backward compatibility)
+	setupLegacyPlaceholderRoutes(protected)
 }
 
 // setupUserRoutes configures user-related protected routes
@@ -144,95 +260,35 @@ func setupUserRoutes(protected fiber.Router) {
 	})
 }
 
-// setupNewsRoutes configures news-related routes (placeholder)
-func setupNewsRoutes(protected fiber.Router) {
-	news := protected.Group("/news")
+// setupLegacyPlaceholderRoutes keeps some legacy routes for reference
+func setupLegacyPlaceholderRoutes(protected fiber.Router) {
+	// Legacy news routes (now redirected to main news implementation)
+	news := protected.Group("/news-legacy")
 
-	// Get personalized news feed
 	news.Get("/feed", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message": "Personalized news feed endpoint",
-			"note":    "Will be implemented in Phase 2 - Checkpoint 3",
+			"message":  "DEPRECATED: Use /api/v1/news/personalized instead",
+			"redirect": "/api/v1/news/personalized",
 		})
 	})
 
-	// Get news by category
-	news.Get("/category/:category", func(c *fiber.Ctx) error {
-		category := c.Params("category")
-		return c.JSON(fiber.Map{
-			"message":  "News by category endpoint",
-			"category": category,
-			"note":     "Will be implemented in Phase 2 - Checkpoint 3",
-		})
-	})
+	// Legacy bookmark routes (now redirected to main implementation)
+	bookmarks := protected.Group("/bookmarks-legacy")
 
-	// Get trending news
-	news.Get("/trending", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "Trending news endpoint",
-			"note":    "Will be implemented in Phase 2 - Checkpoint 3",
-		})
-	})
-}
-
-// setupBookmarkRoutes configures bookmark-related routes (placeholder)
-func setupBookmarkRoutes(protected fiber.Router) {
-	bookmarks := protected.Group("/bookmarks")
-
-	// Get user bookmarks
 	bookmarks.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message": "User bookmarks endpoint",
-			"note":    "Will be implemented in Phase 2 - Checkpoint 4",
+			"message":  "DEPRECATED: Use /api/v1/news/bookmarks instead",
+			"redirect": "/api/v1/news/bookmarks",
 		})
 	})
 
-	// Add bookmark
-	bookmarks.Post("/", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "Add bookmark endpoint",
-			"note":    "Will be implemented in Phase 2 - Checkpoint 4",
-		})
-	})
+	// Legacy search routes (now redirected to main implementation)
+	search := protected.Group("/search-legacy")
 
-	// Remove bookmark
-	bookmarks.Delete("/:id", func(c *fiber.Ctx) error {
-		id := c.Params("id")
-		return c.JSON(fiber.Map{
-			"message":     "Remove bookmark endpoint",
-			"bookmark_id": id,
-			"note":        "Will be implemented in Phase 2 - Checkpoint 4",
-		})
-	})
-}
-
-// setupSearchRoutes configures search-related routes (placeholder)
-func setupSearchRoutes(protected fiber.Router) {
-	search := protected.Group("/search")
-
-	// Search news articles
 	search.Get("/news", func(c *fiber.Ctx) error {
-		query := c.Query("q")
 		return c.JSON(fiber.Map{
-			"message": "News search endpoint",
-			"query":   query,
-			"note":    "Will be implemented in Phase 2 - Checkpoint 5",
-		})
-	})
-
-	// Get search suggestions
-	search.Get("/suggestions", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "Search suggestions endpoint",
-			"note":    "Will be implemented in Phase 2 - Checkpoint 5",
-		})
-	})
-
-	// Search history
-	search.Get("/history", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"message": "Search history endpoint",
-			"note":    "Will be implemented in Phase 2 - Checkpoint 5",
+			"message":  "DEPRECATED: Use /api/v1/news/search instead",
+			"redirect": "/api/v1/news/search",
 		})
 	})
 }
