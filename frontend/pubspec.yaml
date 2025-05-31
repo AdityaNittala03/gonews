@@ -41,6 +41,13 @@ dependencies:
   # Icons & Fonts
   cupertino_icons: ^1.0.6
 
+  # JSON Handling
+  json_annotation: ^4.8.1
+
+  # Secure Storage (optional for enhanced token security)
+  flutter_secure_storage: ^9.0.0
+
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -56,6 +63,9 @@ dev_dependencies:
   # Analysis
   flutter_lints: ^3.0.0
   very_good_analysis: ^5.1.0
+
+  # JSON Code Generation
+  json_serializable: ^6.7.1
 
 flutter:
   uses-material-design: true

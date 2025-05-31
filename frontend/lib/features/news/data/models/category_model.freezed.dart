@@ -191,7 +191,8 @@ class _$CategoryImpl implements _Category {
       required this.colorValue,
       this.articleCount = 0,
       this.isSelected = false,
-      this.description});
+      this.description,
+      this.slug});
 
   factory _$CategoryImpl.fromJson(Map<String, dynamic> json) =>
       _$$CategoryImplFromJson(json);
@@ -212,6 +213,8 @@ class _$CategoryImpl implements _Category {
   final bool isSelected;
   @override
   final String? description;
+  @override
+  final String? slug;
 
   @override
   String toString() {
@@ -265,6 +268,7 @@ abstract class _Category implements Category {
       required final int colorValue,
       final int articleCount,
       final bool isSelected,
+      final String? slug,
       final String? description}) = _$CategoryImpl;
 
   factory _Category.fromJson(Map<String, dynamic> json) =

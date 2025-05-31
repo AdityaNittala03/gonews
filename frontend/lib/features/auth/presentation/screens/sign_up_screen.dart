@@ -1,4 +1,8 @@
-// lib/features/auth/presentation/screens/sign_up_screen.dart
+// ===============================
+// 2. UPDATED SIGN UP SCREEN
+// ===============================
+
+// frontend/lib/features/auth/presentation/screens/sign_up_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +13,7 @@ import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../shared/widgets/common/custom_text_field.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
+import '../../../../services/auth_service.dart'; // NEW: Import real auth service
 
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({Key? key}) : super(key: key);
@@ -25,7 +30,6 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
   final _passwordController = TextEditingController();
 
   bool _isPasswordVisible = false;
-  bool _isLoading = false;
   bool _acceptTerms = false;
 
   late AnimationController _animationController;
@@ -58,6 +62,26 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     ));
 
     _animationController.forward();
+
+    // NEW: Listen to authentication state changes
+    ref.listen<AuthState>(authStateProvider, (previous, next) {
+      if (!mounted) return;
+
+      switch (next) {
+        case Authenticated():
+          _showSuccessSnackbar(AppConstants.signupSuccess);
+          context.go('/home');
+          break;
+        case Error():
+          _showErrorSnackbar(next.message);
+          break;
+        case Loading():
+          // Loading state is handled by watching the provider
+          break;
+        default:
+          break;
+      }
+    });
   }
 
   @override
@@ -71,6 +95,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
   @override
   Widget build(BuildContext context) {
+    // NEW: Watch authentication state
+    final authState = ref.watch(authStateProvider);
+    final isLoading = authState is Loading;
+
     return Scaffold(
       backgroundColor: AppColors.getBackgroundColor(context),
       body: SafeArea(
@@ -81,7 +109,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
               opacity: _fadeAnimation,
               child: SlideTransition(
                 position: _slideAnimation,
-                child: _buildSignUpContent(),
+                child: _buildSignUpContent(isLoading),
               ),
             );
           },
@@ -90,7 +118,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     );
   }
 
-  Widget _buildSignUpContent() {
+  Widget _buildSignUpContent(bool isLoading) {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -103,7 +131,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               GestureDetector(
-                onTap: () => context.pop(),
+                onTap: isLoading ? null : () => context.pop(),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -111,15 +139,16 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                     color: AppColors.grey50,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.arrow_back_ios_new,
-                    color: AppColors.textPrimary,
+                    color:
+                        isLoading ? AppColors.grey400 : AppColors.textPrimary,
                     size: 18,
                   ),
                 ),
               ),
               GestureDetector(
-                onTap: () => context.pop(),
+                onTap: isLoading ? null : () => context.pop(),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -127,9 +156,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                     color: AppColors.grey50,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.close,
-                    color: AppColors.textPrimary,
+                    color:
+                        isLoading ? AppColors.grey400 : AppColors.textPrimary,
                     size: 20,
                   ),
                 ),
@@ -165,6 +195,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                   keyboardType: TextInputType.name,
                   textCapitalization: TextCapitalization.words,
                   validator: Validators.name,
+                  enabled: !isLoading, // NEW: Disable during loading
                 ),
 
                 const SizedBox(height: 16),
@@ -177,6 +208,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                   keyboardType: TextInputType.emailAddress,
                   validator: Validators.email,
                   textCapitalization: TextCapitalization.none,
+                  enabled: !isLoading, // NEW: Disable during loading
                 ),
 
                 const SizedBox(height: 16),
@@ -188,6 +220,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                   prefixIcon: Icons.lock_outline,
                   obscureText: !_isPasswordVisible,
                   validator: Validators.strongPassword,
+                  enabled: !isLoading, // NEW: Disable during loading
                   suffixIcon: IconButton(
                     icon: Icon(
                       _isPasswordVisible
@@ -195,11 +228,13 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                           : Icons.visibility_outlined,
                       color: AppColors.textSecondary,
                     ),
-                    onPressed: () {
-                      setState(() {
-                        _isPasswordVisible = !_isPasswordVisible;
-                      });
-                    },
+                    onPressed: isLoading
+                        ? null
+                        : () {
+                            setState(() {
+                              _isPasswordVisible = !_isPasswordVisible;
+                            });
+                          },
                   ),
                 ),
 
@@ -243,11 +278,13 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                       width: 20,
                       child: Checkbox(
                         value: _acceptTerms,
-                        onChanged: (value) {
-                          setState(() {
-                            _acceptTerms = value ?? false;
-                          });
-                        },
+                        onChanged: isLoading
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  _acceptTerms = value ?? false;
+                                });
+                              },
                         activeColor: AppColors.primary,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(4),
@@ -271,7 +308,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                                   .textTheme
                                   .bodySmall
                                   ?.copyWith(
-                                    color: AppColors.primary,
+                                    color: isLoading
+                                        ? AppColors.grey400
+                                        : AppColors.primary,
                                     fontWeight: FontWeight.w600,
                                     decoration: TextDecoration.underline,
                                   ),
@@ -283,7 +322,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                                   .textTheme
                                   .bodySmall
                                   ?.copyWith(
-                                    color: AppColors.primary,
+                                    color: isLoading
+                                        ? AppColors.grey400
+                                        : AppColors.primary,
                                     fontWeight: FontWeight.w600,
                                     decoration: TextDecoration.underline,
                                   ),
@@ -300,8 +341,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                 // Sign Up Button
                 CustomButton(
                   text: 'Sign Up',
-                  onPressed: _acceptTerms ? _handleSignUp : null,
-                  isLoading: _isLoading,
+                  onPressed:
+                      (_acceptTerms && !isLoading) ? _handleSignUp : null,
+                  isLoading: isLoading, // NEW: Show loading state
                   type: ButtonType.primary,
                 ),
 
@@ -340,7 +382,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                 // Google Sign Up Button
                 CustomButton(
                   text: 'Sign Up with Google',
-                  onPressed: _handleGoogleSignUp,
+                  onPressed: isLoading ? null : _handleGoogleSignUp,
                   type: ButtonType.outline,
                   prefixIcon: Image.asset(
                     'assets/images/icons/google_icon.png',
@@ -369,11 +411,13 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                           ),
                     ),
                     GestureDetector(
-                      onTap: () => context.pop(),
+                      onTap: isLoading ? null : () => context.pop(),
                       child: Text(
                         'Sign In',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: AppColors.primary,
+                              color: isLoading
+                                  ? AppColors.grey400
+                                  : AppColors.primary,
                               fontWeight: FontWeight.w600,
                             ),
                       ),
@@ -412,34 +456,20 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     );
   }
 
+  // NEW: Updated to use real authentication service
   void _handleSignUp() async {
     if (_formKey.currentState!.validate() && _acceptTerms) {
-      setState(() {
-        _isLoading = true;
-      });
+      final name = _nameController.text.trim();
+      final email = _emailController.text.trim();
+      final password = _passwordController.text;
 
-      try {
-        // Mock registration for Phase 1
-        await Future.delayed(const Duration(seconds: 2));
-
-        final name = _nameController.text.trim();
-        final email = _emailController.text.trim();
-
-        if (mounted) {
-          _showSuccessSnackbar('Account created successfully! Welcome, $name!');
-          context.go('/home');
-        }
-      } catch (error) {
-        if (mounted) {
-          _showErrorSnackbar('Something went wrong. Please try again.');
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
+      // Use the real authentication service
+      final authNotifier = ref.read(authStateProvider.notifier);
+      await authNotifier.register(
+        name: name,
+        email: email,
+        password: password,
+      );
     } else if (!_acceptTerms) {
       _showErrorSnackbar(
           'Please accept the Terms of Service and Privacy Policy');
@@ -447,29 +477,8 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
   }
 
   void _handleGoogleSignUp() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      // Mock Google sign up for Phase 1
-      await Future.delayed(const Duration(seconds: 2));
-
-      if (mounted) {
-        _showSuccessSnackbar('Account created with Google successfully!');
-        context.go('/home');
-      }
-    } catch (error) {
-      if (mounted) {
-        _showErrorSnackbar('Google sign up failed. Please try again.');
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+    // TODO: Implement Google Sign Up with real service
+    _showInfoSnackbar('Google Sign Up will be implemented in future updates');
   }
 
   void _showSuccessSnackbar(String message) {
@@ -490,6 +499,19 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
       SnackBar(
         content: Text(message),
         backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  void _showInfoSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.info,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),

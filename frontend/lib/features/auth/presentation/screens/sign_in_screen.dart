@@ -1,4 +1,8 @@
-// lib/features/auth/presentation/screens/sign_in_screen.dart
+// ===============================
+// 1. UPDATED SIGN IN SCREEN
+// ===============================
+
+// frontend/lib/features/auth/presentation/screens/sign_in_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +13,7 @@ import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../shared/widgets/common/custom_text_field.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
+import '../../../../services/auth_service.dart'; // NEW: Import real auth service
 
 class SignInScreen extends ConsumerStatefulWidget {
   const SignInScreen({Key? key}) : super(key: key);
@@ -24,7 +29,6 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
   final _passwordController = TextEditingController();
 
   bool _isPasswordVisible = false;
-  bool _isLoading = false;
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -56,6 +60,26 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
     ));
 
     _animationController.forward();
+
+    // NEW: Listen to authentication state changes
+    ref.listen<AuthState>(authStateProvider, (previous, next) {
+      if (!mounted) return;
+
+      switch (next) {
+        case Authenticated():
+          _showSuccessSnackbar(AppConstants.loginSuccess);
+          context.go('/home');
+          break;
+        case Error():
+          _showErrorSnackbar(next.message);
+          break;
+        case Loading():
+          // Loading state is handled by watching the provider
+          break;
+        default:
+          break;
+      }
+    });
   }
 
   @override
@@ -68,6 +92,10 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
 
   @override
   Widget build(BuildContext context) {
+    // NEW: Watch authentication state
+    final authState = ref.watch(authStateProvider);
+    final isLoading = authState is Loading;
+
     return Scaffold(
       backgroundColor: AppColors.getBackgroundColor(context),
       body: SafeArea(
@@ -78,7 +106,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
               opacity: _fadeAnimation,
               child: SlideTransition(
                 position: _slideAnimation,
-                child: _buildSignInContent(),
+                child: _buildSignInContent(isLoading),
               ),
             );
           },
@@ -87,7 +115,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
     );
   }
 
-  Widget _buildSignInContent() {
+  Widget _buildSignInContent(bool isLoading) {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -144,6 +172,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                   keyboardType: TextInputType.emailAddress,
                   validator: Validators.email,
                   textCapitalization: TextCapitalization.none,
+                  enabled: !isLoading, // NEW: Disable during loading
                 ),
 
                 const SizedBox(height: 16),
@@ -155,6 +184,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                   prefixIcon: Icons.lock_outline,
                   obscureText: !_isPasswordVisible,
                   validator: Validators.password,
+                  enabled: !isLoading, // NEW: Disable during loading
                   suffixIcon: IconButton(
                     icon: Icon(
                       _isPasswordVisible
@@ -162,11 +192,13 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                           : Icons.visibility_outlined,
                       color: AppColors.textSecondary,
                     ),
-                    onPressed: () {
-                      setState(() {
-                        _isPasswordVisible = !_isPasswordVisible;
-                      });
-                    },
+                    onPressed: isLoading
+                        ? null
+                        : () {
+                            setState(() {
+                              _isPasswordVisible = !_isPasswordVisible;
+                            });
+                          },
                   ),
                 ),
 
@@ -175,8 +207,8 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                 // Sign In Button
                 CustomButton(
                   text: 'Sign In',
-                  onPressed: _handleSignIn,
-                  isLoading: _isLoading,
+                  onPressed: isLoading ? null : _handleSignIn,
+                  isLoading: isLoading, // NEW: Show loading state
                   type: ButtonType.primary,
                 ),
 
@@ -185,11 +217,15 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                 // Forgot Password Link
                 Center(
                   child: TextButton(
-                    onPressed: () => context.push('/forgot-password'),
+                    onPressed: isLoading
+                        ? null
+                        : () => context.push('/forgot-password'),
                     child: Text(
                       'Forgot Password?',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.primary,
+                            color: isLoading
+                                ? AppColors.grey400
+                                : AppColors.primary,
                             fontWeight: FontWeight.w500,
                           ),
                     ),
@@ -231,7 +267,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                 // Google Sign In Button
                 CustomButton(
                   text: 'Sign In with Google',
-                  onPressed: _handleGoogleSignIn,
+                  onPressed: isLoading ? null : _handleGoogleSignIn,
                   type: ButtonType.outline,
                   prefixIcon: Image.asset(
                     'assets/images/icons/google_icon.png',
@@ -260,11 +296,13 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                           ),
                     ),
                     GestureDetector(
-                      onTap: () => context.push('/sign-up'),
+                      onTap: isLoading ? null : () => context.push('/sign-up'),
                       child: Text(
                         'Sign Up',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: AppColors.primary,
+                              color: isLoading
+                                  ? AppColors.grey400
+                                  : AppColors.primary,
                               fontWeight: FontWeight.w600,
                             ),
                       ),
@@ -281,70 +319,21 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
     );
   }
 
+  // NEW: Updated to use real authentication service
   void _handleSignIn() async {
     if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
+      final email = _emailController.text.trim();
+      final password = _passwordController.text;
 
-      try {
-        // Mock authentication for Phase 1
-        await Future.delayed(const Duration(seconds: 2));
-
-        final email = _emailController.text.trim();
-        final password = _passwordController.text;
-
-        if (email == AppConstants.demoEmail &&
-            password == AppConstants.demoPassword) {
-          // Successful login
-          if (mounted) {
-            _showSuccessSnackbar('Welcome back!');
-            context.go('/home');
-          }
-        } else {
-          // Invalid credentials
-          if (mounted) {
-            _showErrorSnackbar('Invalid email or password');
-          }
-        }
-      } catch (error) {
-        if (mounted) {
-          _showErrorSnackbar('Something went wrong. Please try again.');
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
+      // Use the real authentication service
+      final authNotifier = ref.read(authStateProvider.notifier);
+      await authNotifier.login(email, password);
     }
   }
 
   void _handleGoogleSignIn() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      // Mock Google sign in for Phase 1
-      await Future.delayed(const Duration(seconds: 2));
-
-      if (mounted) {
-        _showSuccessSnackbar('Signed in with Google successfully!');
-        context.go('/home');
-      }
-    } catch (error) {
-      if (mounted) {
-        _showErrorSnackbar('Google sign in failed. Please try again.');
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
+    // TODO: Implement Google Sign In with real service
+    _showInfoSnackbar('Google Sign In will be implemented in future updates');
   }
 
   void _showSuccessSnackbar(String message) {
@@ -365,6 +354,19 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
       SnackBar(
         content: Text(message),
         backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
+  void _showInfoSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.info,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),

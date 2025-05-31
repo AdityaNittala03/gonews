@@ -2,50 +2,54 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/article_model.dart';
-import '../../data/models/category_model.dart';
-import '../../data/services/mock_news_service.dart';
+import '../../data/models/category_model.dart' as news_models;
+import '../../../../services/news_service.dart';
+import '../../../../core/network/api_client.dart';
 
 // News service provider
-final newsServiceProvider = Provider<MockNewsService>((ref) {
-  return MockNewsService();
+final newsServiceProvider = Provider<NewsService>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return NewsService(apiClient);
 });
 
 // Selected category provider
 final selectedCategoryProvider = StateProvider<String>((ref) => 'all');
 
-// News articles provider
+// News articles provider with real API integration
 final newsProvider =
     StateNotifierProvider<NewsNotifier, AsyncValue<List<Article>>>((ref) {
   final newsService = ref.watch(newsServiceProvider);
-  return NewsNotifier(newsService);
+  final selectedCategory = ref.watch(selectedCategoryProvider);
+  return NewsNotifier(newsService, selectedCategory);
 });
 
-// Filtered news provider (by category)
+// Categories provider - fetches from real API
+final categoriesProvider =
+    FutureProvider<List<news_models.Category>>((ref) async {
+  final newsService = ref.watch(newsServiceProvider);
+  final result = await newsService.getCategories();
+
+  if (result.isSuccess) {
+    // Add "All" category at the beginning for UI
+    final allCategory = news_models.Category(
+      id: 'all',
+      name: 'All',
+      icon: 'apps',
+      colorValue: 0xFF607D8B,
+      articleCount: 0,
+      isSelected: false,
+      description: 'All categories',
+    );
+    return [allCategory, ...result.categories];
+  } else {
+    throw Exception(result.message);
+  }
+});
+
+// Filtered news provider (by category) - now works with API pagination
 final filteredNewsProvider = Provider<AsyncValue<List<Article>>>((ref) {
   final news = ref.watch(newsProvider);
-  final selectedCategory = ref.watch(selectedCategoryProvider);
-
-  return news.when(
-    data: (articles) {
-      if (selectedCategory == 'all') {
-        return AsyncData(articles);
-      }
-
-      final filteredArticles = articles
-          .where((article) =>
-              article.category.toLowerCase() == selectedCategory.toLowerCase())
-          .toList();
-
-      return AsyncData(filteredArticles);
-    },
-    loading: () => const AsyncLoading(),
-    error: (error, stackTrace) => AsyncError(error, stackTrace),
-  );
-});
-
-// Categories provider
-final categoriesProvider = Provider<List<Category>>((ref) {
-  return CategoryConstants.getMainCategories();
+  return news; // NewsNotifier now handles category filtering internally
 });
 
 // Article by ID provider
@@ -90,28 +94,25 @@ final relatedArticlesProvider =
   );
 });
 
-// Trending articles provider
-final trendingArticlesProvider = Provider<List<Article>>((ref) {
-  final news = ref.watch(newsProvider);
+// Trending articles provider - uses real API
+final trendingArticlesProvider = FutureProvider<List<Article>>((ref) async {
+  final newsService = ref.watch(newsServiceProvider);
+  final result = await newsService.getTrendingNews(limit: 10);
 
-  return news.when(
-    data: (articles) {
-      // For now, just return articles marked as trending
-      // In Phase 2, this will be based on real metrics
-      return articles.where((article) => article.isTrending).take(10).toList();
-    },
-    loading: () => [],
-    error: (error, stackTrace) => [],
-  );
+  if (result.isSuccess) {
+    return result.articles;
+  } else {
+    throw Exception(result.message);
+  }
 });
 
-// Breaking news provider
+// Breaking news provider - filters recent articles
 final breakingNewsProvider = Provider<List<Article>>((ref) {
   final news = ref.watch(newsProvider);
 
   return news.when(
     data: (articles) {
-      // For now, just return recent articles from the last 6 hours
+      // Return recent articles from the last 6 hours
       final sixHoursAgo = DateTime.now().subtract(const Duration(hours: 6));
       return articles
           .where((article) => article.publishedAt.isAfter(sixHoursAgo))
@@ -126,24 +127,65 @@ final breakingNewsProvider = Provider<List<Article>>((ref) {
 // News refresh provider
 final newsRefreshProvider = StateProvider<int>((ref) => 0);
 
-// News Notifier
+// Real News Notifier with API integration
 class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
-  final MockNewsService _newsService;
+  final NewsService _newsService;
+  String _currentCategory;
+  int _currentPage = 1;
+  bool _hasMorePages = true;
+  bool _isLoadingMore = false;
 
-  NewsNotifier(this._newsService) : super(const AsyncLoading()) {
+  NewsNotifier(this._newsService, this._currentCategory)
+      : super(const AsyncLoading()) {
     loadNews();
   }
 
-  // Load news articles
-  Future<void> loadNews({String? category}) async {
+  // Load news articles from API
+  Future<void> loadNews({String? category, bool refresh = false}) async {
     try {
-      state = const AsyncLoading();
+      if (refresh || category != _currentCategory) {
+        state = const AsyncLoading();
+        _currentPage = 1;
+        _hasMorePages = true;
+        if (category != null) _currentCategory = category;
+      }
 
-      final articles = await _newsService.getArticles(
-        category: category ?? 'all',
-      );
+      late final NewsResult result;
 
-      state = AsyncData(articles);
+      if (_currentCategory == 'all') {
+        // Fetch general news feed
+        result = await _newsService.getNewsFeed(
+          page: _currentPage,
+          limit: 20,
+          onlyIndian: true, // India-first strategy
+        );
+      } else {
+        // Fetch category-specific news
+        result = await _newsService.getCategoryNews(
+          category: _currentCategory,
+          page: _currentPage,
+          limit: 20,
+          onlyIndian: true,
+        );
+      }
+
+      if (result.isSuccess) {
+        _hasMorePages = result.hasMorePages;
+
+        if (refresh || _currentPage == 1) {
+          state = AsyncData(result.articles);
+        } else {
+          // Append to existing articles (pagination)
+          final currentState = state;
+          if (currentState is AsyncData<List<Article>>) {
+            final updatedArticles = [...currentState.value, ...result.articles];
+            state = AsyncData(updatedArticles);
+          }
+        }
+        _currentPage = result.currentPage;
+      } else {
+        state = AsyncError(Exception(result.message), StackTrace.current);
+      }
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -151,43 +193,75 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
 
   // Refresh news
   Future<void> refreshNews() async {
-    await loadNews();
+    await loadNews(refresh: true);
   }
 
   // Load news by category
   Future<void> loadNewsByCategory(String category) async {
-    await loadNews(category: category);
+    await loadNews(category: category, refresh: true);
   }
 
-  // Search news (for integration with search feature)
+  // Search news using real API
   Future<void> searchNews(String query) async {
     try {
       state = const AsyncLoading();
 
-      final articles = await _newsService.searchArticles(query);
+      final result = await _newsService.searchNews(
+        query: query,
+        page: 1,
+        limit: 20,
+        onlyIndian: true,
+      );
 
-      state = AsyncData(articles);
+      if (result.isSuccess) {
+        state = AsyncData(result.articles);
+        _currentPage = result.currentPage;
+        _hasMorePages = result.hasMorePages;
+      } else {
+        state = AsyncError(Exception(result.message), StackTrace.current);
+      }
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
   }
 
-  // Load more articles (for pagination)
+  // Load more articles (pagination)
   Future<void> loadMoreArticles() async {
-    final currentState = state;
+    if (_isLoadingMore || !_hasMorePages) return;
 
+    final currentState = state;
     if (currentState is AsyncData<List<Article>>) {
       try {
-        // Simulate loading more articles
-        final moreArticles = await _newsService.getArticles(
-          page: 2, // This would be dynamic in real implementation
-        );
+        _isLoadingMore = true;
 
-        final updatedArticles = [...currentState.value, ...moreArticles];
-        state = AsyncData(updatedArticles);
-      } catch (error, stackTrace) {
+        late final NewsResult result;
+
+        if (_currentCategory == 'all') {
+          result = await _newsService.getNewsFeed(
+            page: _currentPage + 1,
+            limit: 20,
+            onlyIndian: true,
+          );
+        } else {
+          result = await _newsService.getCategoryNews(
+            category: _currentCategory,
+            page: _currentPage + 1,
+            limit: 20,
+            onlyIndian: true,
+          );
+        }
+
+        if (result.isSuccess) {
+          final updatedArticles = [...currentState.value, ...result.articles];
+          state = AsyncData(updatedArticles);
+          _currentPage = result.currentPage;
+          _hasMorePages = result.hasMorePages;
+        }
+      } catch (error) {
         // Keep current state if loading more fails
         print('Failed to load more articles: $error');
+      } finally {
+        _isLoadingMore = false;
       }
     }
   }
@@ -223,6 +297,20 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
       state = AsyncData(updatedArticles);
     }
   }
+
+  // Update category and reload news
+  void updateCategory(String category) {
+    if (_currentCategory != category) {
+      _currentCategory = category;
+      loadNews(refresh: true);
+    }
+  }
+
+  // Getters
+  bool get hasMorePages => _hasMorePages;
+  bool get isLoadingMore => _isLoadingMore;
+  String get currentCategory => _currentCategory;
+  int get currentPage => _currentPage;
 }
 
 // News loading state provider
@@ -256,4 +344,22 @@ final articleCountByCategoryProvider =
     loading: () => 0,
     error: (error, stackTrace) => 0,
   );
+});
+
+// News pagination info provider
+final newsPaginationProvider = Provider<Map<String, dynamic>>((ref) {
+  final newsNotifier = ref.watch(newsProvider.notifier);
+
+  return {
+    'currentPage': newsNotifier.currentPage,
+    'hasMorePages': newsNotifier.hasMorePages,
+    'isLoadingMore': newsNotifier.isLoadingMore,
+    'currentCategory': newsNotifier.currentCategory,
+  };
+});
+
+// API health check provider
+final apiHealthProvider = FutureProvider<bool>((ref) async {
+  final newsService = ref.watch(newsServiceProvider);
+  return await newsService.checkApiHealth();
 });

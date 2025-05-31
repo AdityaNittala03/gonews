@@ -17,6 +17,7 @@ class Category with _$Category {
     @Default(0) int articleCount,
     @Default(false) bool isSelected,
     String? description,
+    String? slug,
   }) = _Category;
 
   factory Category.fromJson(Map<String, dynamic> json) =>

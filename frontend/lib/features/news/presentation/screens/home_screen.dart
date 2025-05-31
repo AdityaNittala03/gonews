@@ -8,31 +8,15 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
-import '../../../../shared/services/mock_data_service.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
+import '../../../../services/auth_service.dart';
 import '../../data/models/article_model.dart';
-import '../../data/models/category_model.dart';
+import '../../data/models/category_model.dart' as news_models;
 import '../widgets/article_card.dart';
 import '../widgets/category_chip.dart';
+import '../providers/news_providers.dart';
 
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
-
-// Providers for news data
-final newsProvider =
-    FutureProvider.family<List<Article>, String>((ref, category) async {
-  final mockService = ref.read(mockDataServiceProvider);
-  if (category == 'all') {
-    return await mockService.getArticles();
-  }
-  return await mockService.getArticlesByCategory(category);
-});
-
-final categoriesProvider = FutureProvider<List<Category>>((ref) async {
-  final mockService = ref.read(mockDataServiceProvider);
-  return await mockService.getCategories();
-});
-
-final selectedCategoryProvider = StateProvider<String>((ref) => 'all');
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -48,7 +32,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   late Animation<double> _fabAnimation;
 
   bool _showFab = false;
-  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -72,6 +55,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _onScroll() {
+    // Handle scroll to top FAB
     if (_scrollController.offset > 200 && !_showFab) {
       setState(() {
         _showFab = true;
@@ -82,6 +66,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         _showFab = false;
       });
       _fabAnimationController.reverse();
+    }
+
+    // Handle infinite scroll
+    if (_scrollController.position.extentAfter < 300) {
+      final newsNotifier = ref.read(newsProvider.notifier);
+      newsNotifier.loadMoreArticles();
     }
   }
 
@@ -94,9 +84,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
-    final selectedCategory = ref.watch(selectedCategoryProvider);
     final categoriesAsync = ref.watch(categoriesProvider);
-    final newsAsync = ref.watch(newsProvider(selectedCategory));
+    final newsAsync = ref.watch(filteredNewsProvider);
+    final authState = ref.watch(authStateProvider);
+    final paginationInfo = ref.watch(newsPaginationProvider);
+
+    // Listen to category changes
+    ref.listen<String>(selectedCategoryProvider, (previous, next) {
+      if (previous != next) {
+        ref.read(newsProvider.notifier).updateCategory(next);
+      }
+    });
 
     return Scaffold(
       backgroundColor: AppColors.backgroundLight,
@@ -104,14 +102,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         child: Column(
           children: [
             // Custom App Bar
-            _buildAppBar(),
+            _buildAppBar(authState),
 
             // Categories
             _buildCategoriesSection(categoriesAsync),
 
             // News Feed
             Expanded(
-              child: _buildNewsFeed(newsAsync, selectedCategory),
+              child: _buildNewsFeed(newsAsync, paginationInfo),
             ),
           ],
         ),
@@ -120,7 +118,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  Widget _buildAppBar() {
+  Widget _buildAppBar(AuthState authState) {
+    // Get user name from auth state
+    String userName = 'User';
+    if (authState is Authenticated) {
+      userName = authState.userName.isNotEmpty ? authState.userName : 'User';
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -130,7 +134,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  DateFormatter.getGreeting(),
+                  '${DateFormatter.getGreeting()}, $userName',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -160,7 +164,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 icon: const Icon(Icons.search),
                 color: AppColors.textPrimary,
               ),
-              // Bookmark Icon with Badge (replacing notification icon)
+              // Bookmark Icon with Badge
               Consumer(
                 builder: (context, ref, child) {
                   final bookmarkCount = ref.watch(bookmarkCountProvider);
@@ -222,7 +226,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  Widget _buildCategoriesSection(AsyncValue<List<Category>> categoriesAsync) {
+  Widget _buildCategoriesSection(
+      AsyncValue<List<news_models.Category>> categoriesAsync) {
     return Container(
       height: 50,
       margin: const EdgeInsets.only(bottom: 8),
@@ -249,29 +254,54 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             );
           },
         ),
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: 5,
+          itemBuilder: (context, index) {
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ShimmerWidget(
+                child: Container(
+                  width: 100,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: AppColors.grey200,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
         error: (error, stack) => Center(
-          child: Text('Error loading categories: $error'),
+          child: Text(
+            'Failed to load categories',
+            style: TextStyle(color: AppColors.error),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildNewsFeed(
-      AsyncValue<List<Article>> newsAsync, String selectedCategory) {
+  Widget _buildNewsFeed(AsyncValue<List<Article>> newsAsync,
+      Map<String, dynamic> paginationInfo) {
     return newsAsync.when(
       data: (articles) => RefreshIndicator(
-        onRefresh: () => _handleRefresh(selectedCategory),
+        onRefresh: () => ref.read(newsProvider.notifier).refreshNews(),
         color: AppColors.primary,
         child: articles.isEmpty
             ? _buildEmptyState()
             : ListView.builder(
                 controller: _scrollController,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: articles.length + 1, // +1 for load more indicator
+                itemCount:
+                    articles.length + (paginationInfo['hasMorePages'] ? 1 : 0),
                 itemBuilder: (context, index) {
                   if (index == articles.length) {
-                    return _buildLoadMoreIndicator();
+                    // Load more indicator
+                    return _buildLoadMoreIndicator(
+                        paginationInfo['isLoadingMore']);
                   }
 
                   final article = articles[index];
@@ -314,6 +344,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Widget _buildEmptyState() {
+    final selectedCategory = ref.watch(selectedCategoryProvider);
+    final categoryName =
+        selectedCategory == 'all' ? 'this category' : selectedCategory;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -332,7 +366,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'Try selecting a different category or\ncheck back later for new content',
+            'No articles available for $categoryName.\nTry selecting a different category or check back later.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                 ),
@@ -341,7 +375,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           const SizedBox(height: 24),
           CustomButton(
             text: 'Refresh',
-            onPressed: () => _handleRefresh(ref.read(selectedCategoryProvider)),
+            onPressed: () => ref.read(newsProvider.notifier).refreshNews(),
             type: ButtonType.outline,
             width: 120,
           ),
@@ -362,14 +396,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
           const SizedBox(height: 16),
           Text(
-            'Something went wrong',
+            'Connection Error',
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   color: AppColors.textPrimary,
                 ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Please check your connection\nand try again',
+            error.contains('Failed to fetch news')
+                ? 'Unable to fetch news from server.\nPlease check your connection and try again.'
+                : error,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                 ),
@@ -378,7 +414,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           const SizedBox(height: 24),
           CustomButton(
             text: 'Retry',
-            onPressed: () => _handleRefresh(ref.read(selectedCategoryProvider)),
+            onPressed: () => ref.read(newsProvider.notifier).refreshNews(),
             type: ButtonType.primary,
             width: 120,
           ),
@@ -387,7 +423,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  Widget _buildLoadMoreIndicator() {
+  Widget _buildLoadMoreIndicator(bool isLoadingMore) {
+    if (!isLoadingMore) {
+      return const SizedBox.shrink();
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -426,36 +466,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  Future<void> _handleRefresh(String category) async {
-    setState(() {
-      _isRefreshing = true;
-    });
-
-    // Invalidate the provider to force refresh
-    ref.invalidate(newsProvider(category));
-
-    // Wait a bit for the new data to load
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    setState(() {
-      _isRefreshing = false;
-    });
-
-    _showSuccessSnackbar('News refreshed successfully!');
-  }
-
   void _navigateToArticle(Article article) {
     context.push('/article/${article.id}');
   }
 
-  void _toggleBookmark(Article article) {
-    // Get the bookmark provider and toggle bookmark
-    ref.read(bookmarksProvider.notifier).toggleBookmark(article);
+  void _toggleBookmark(Article article) async {
+    try {
+      // Use real bookmark service
+      final newsService = ref.read(newsServiceProvider);
+      final isCurrentlyBookmarked =
+          ref.read(bookmarkStatusProvider(article.id));
 
-    final isBookmarked = ref.read(bookmarkStatusProvider(article.id));
-    final message =
-        isBookmarked ? 'Added to bookmarks' : 'Removed from bookmarks';
-    _showInfoSnackbar(message);
+      if (isCurrentlyBookmarked) {
+        final result = await newsService.removeBookmark(article.id);
+        if (result.isSuccess) {
+          ref.read(bookmarksProvider.notifier).removeBookmark(article.id);
+          _showSuccessSnackbar('Removed from bookmarks');
+        } else {
+          _showErrorSnackbar(result.message);
+        }
+      } else {
+        final result = await newsService.addBookmark(articleId: article.id);
+        if (result.isSuccess) {
+          ref.read(bookmarksProvider.notifier).toggleBookmark(article);
+          _showSuccessSnackbar('Added to bookmarks');
+        } else {
+          _showErrorSnackbar(result.message);
+        }
+      }
+    } catch (e) {
+      _showErrorSnackbar('Failed to update bookmark: ${e.toString()}');
+    }
   }
 
   void _shareArticle(Article article) {
@@ -481,6 +522,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           borderRadius: BorderRadius.circular(8),
         ),
         duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
