@@ -242,13 +242,13 @@ func SetupAllNewsRoutes(app *fiber.App, newsHandler *handlers.NewsHandler, jwtMa
 // ROUTE DOCUMENTATION HELPERS
 // ===============================
 
-// RouteInfo represents information about a route
-type RouteInfo struct {
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Description string `json:"description"`
-	AuthLevel   string `json:"auth_level"`
-}
+// // RouteInfo represents information about a route
+// type RouteInfo struct {
+// 	Method      string `json:"method"`
+// 	Path        string `json:"path"`
+// 	Description string `json:"description"`
+// 	AuthLevel   string `json:"auth_level"`
+// }
 
 // GetNewsRoutesSummary returns a summary of all news routes for documentation
 func GetNewsRoutesSummary() map[string][]RouteInfo {
