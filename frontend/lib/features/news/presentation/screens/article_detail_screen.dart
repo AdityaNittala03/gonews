@@ -15,7 +15,7 @@ import '../providers/news_providers.dart';
 
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 
-// ✅ ONLY CHANGE: Use existing providers instead of creating new ones with API errors
+// ✅ FIXED: Use uniqueId throughout and handle nullable fields
 
 class ArticleDetailScreen extends ConsumerStatefulWidget {
   final String articleId;
@@ -124,10 +124,11 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
       backgroundColor: AppColors.primary,
       iconTheme: const IconThemeData(color: AppColors.white),
       actions: [
-        // ✅ FIXED: Use Consumer to get bookmark status
+        // ✅ FIXED: Use uniqueId for bookmark status
         Consumer(
           builder: (context, ref, child) {
-            final isBookmarked = ref.watch(bookmarkStatusProvider(article.id));
+            final isBookmarked =
+                ref.watch(bookmarkStatusProvider(article.uniqueId));
             return IconButton(
               onPressed: () => _toggleBookmark(article),
               icon: Icon(
@@ -146,9 +147,10 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
         background: Stack(
           fit: StackFit.expand,
           children: [
-            if (article.imageUrl.isNotEmpty)
+            // ✅ FIXED: Use safeImageUrl
+            if (article.safeImageUrl.isNotEmpty)
               Image.network(
-                article.imageUrl,
+                article.safeImageUrl,
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
@@ -201,7 +203,8 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      article.category.toUpperCase(),
+                      // ✅ FIXED: Use categoryDisplayName
+                      article.categoryDisplayName.toUpperCase(),
                       style: const TextStyle(
                         color: AppColors.white,
                         fontSize: 12,
@@ -230,8 +233,8 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        // ✅ FIXED: Use correct method name
-                        DateFormatter.getTimeAgo(article.publishedAt),
+                        // ✅ FIXED: Use timeAgo extension method
+                        article.timeAgo,
                         style: TextStyle(
                           color: AppColors.white.withOpacity(0.8),
                           fontSize: 12,
@@ -245,7 +248,8 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        '${article.readTime} min read',
+                        // ✅ FIXED: Use estimatedReadTime
+                        '${article.estimatedReadTime} min read',
                         style: TextStyle(
                           color: AppColors.white.withOpacity(0.8),
                           fontSize: 12,
@@ -276,8 +280,9 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                 radius: 20,
                 backgroundColor: AppColors.primaryContainer,
                 child: Text(
-                  article.author.isNotEmpty
-                      ? article.author[0].toUpperCase()
+                  // ✅ FIXED: Use safeAuthor
+                  article.safeAuthor.isNotEmpty
+                      ? article.safeAuthor[0].toUpperCase()
                       : 'A',
                   style: TextStyle(
                     color: AppColors.primary,
@@ -291,9 +296,8 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      article.author.isNotEmpty
-                          ? article.author
-                          : 'Unknown Author',
+                      // ✅ FIXED: Use safeAuthor
+                      article.safeAuthor,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
@@ -313,7 +317,9 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
           const SizedBox(height: 24),
 
           // Article description
-          if (article.description.isNotEmpty)
+          // ✅ FIXED: Use safeDescription and check if not empty
+          if (article.safeDescription.isNotEmpty &&
+              article.safeDescription != 'No description available')
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -325,7 +331,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                 ),
               ),
               child: Text(
-                article.description,
+                article.safeDescription,
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       fontStyle: FontStyle.italic,
                       color: AppColors.textSecondary,
@@ -338,7 +344,8 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
 
           // Article content
           Text(
-            article.content,
+            // ✅ FIXED: Use safeContent
+            article.safeContent,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                   height: 1.8,
                   fontSize: 16,
@@ -395,8 +402,9 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
           // Action buttons
           Consumer(
             builder: (context, ref, child) {
+              // ✅ FIXED: Use uniqueId for bookmark status
               final isBookmarked =
-                  ref.watch(bookmarkStatusProvider(article.id));
+                  ref.watch(bookmarkStatusProvider(article.uniqueId));
               return Row(
                 children: [
                   Expanded(
@@ -531,21 +539,25 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
   // Action methods
   void _toggleBookmark(Article article) async {
     try {
-      // ✅ FIXED: Use newsServiceProvider from news_providers.dart (not services/news_service.dart)
+      // ✅ FIXED: Use newsServiceProvider and uniqueId
       final newsService = ref.read(newsServiceProvider);
+      final articleIdentifier = article.uniqueId;
       final isCurrentlyBookmarked =
-          ref.read(bookmarkStatusProvider(article.id));
+          ref.read(bookmarkStatusProvider(articleIdentifier));
 
       if (isCurrentlyBookmarked) {
-        final result = await newsService.removeBookmark(article.id);
+        final result = await newsService.removeBookmark(articleIdentifier);
         if (result.isSuccess) {
-          ref.read(bookmarksProvider.notifier).removeBookmark(article.id);
+          ref
+              .read(bookmarksProvider.notifier)
+              .removeBookmark(articleIdentifier);
           _showSuccessSnackbar('Removed from bookmarks');
         } else {
           _showErrorSnackbar(result.message);
         }
       } else {
-        final result = await newsService.addBookmark(articleId: article.id);
+        final result =
+            await newsService.addBookmark(articleId: articleIdentifier);
         if (result.isSuccess) {
           ref.read(bookmarksProvider.notifier).toggleBookmark(article);
           _showSuccessSnackbar('Added to bookmarks');
@@ -562,8 +574,9 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     _showInfoSnackbar('Share functionality coming soon!');
   }
 
+  // ✅ FIXED: Use uniqueId for navigation
   void _navigateToArticle(Article article) {
-    context.go('/article/${article.id}');
+    context.go('/article/${article.uniqueId}');
   }
 
   void _scrollToTop() {

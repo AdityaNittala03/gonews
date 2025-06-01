@@ -339,7 +339,8 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	// ===============================
 
 	// Main news feed (LIVE INTEGRATION!)
-	news.Get("/", newsHandler.GetNewsFeed)
+	news.Get("", newsHandler.GetNewsFeed)      // This handles /api/v1/news (without trailing slash)
+	news.Get("/", newsHandler.GetNewsFeed)     // This handles /api/v1/news/ (with trailing slash)
 	news.Get("/feed", newsHandler.GetNewsFeed) // Alternative path
 
 	// Category-specific news (LIVE INTEGRATION!)

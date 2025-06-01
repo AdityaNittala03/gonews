@@ -1,7 +1,3 @@
-// ===============================
-// 1. UPDATED SIGN IN SCREEN
-// ===============================
-
 // frontend/lib/features/auth/presentation/screens/sign_in_screen.dart
 
 import 'package:flutter/material.dart';
@@ -61,7 +57,20 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
 
     _animationController.forward();
 
-    // NEW: Listen to authentication state changes
+    // ✅ REMOVED: ref.listen from initState() - moved to build()
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // ✅ MOVED: ref.listen to build method
     ref.listen<AuthState>(authStateProvider, (previous, next) {
       if (!mounted) return;
 
@@ -80,18 +89,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
           break;
       }
     });
-  }
 
-  @override
-  void dispose() {
-    _animationController.dispose();
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
     // NEW: Watch authentication state
     final authState = ref.watch(authStateProvider);
     final isLoading = authState is Loading;

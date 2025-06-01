@@ -7,8 +7,9 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
-import '../../../../shared/services/mock_data_service.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
+import '../../../../services/news_service.dart';
+import '../../../../core/network/api_client.dart';
 import '../../../news/data/models/article_model.dart';
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 
@@ -20,6 +21,12 @@ final searchSortProvider =
 
 enum SearchSort { recent, relevant }
 
+// News service provider for search
+final searchNewsServiceProvider = Provider<NewsService>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return NewsService(apiClient);
+});
+
 final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
   final query = ref.watch(searchQueryProvider);
   final filter = ref.watch(searchFilterProvider);
@@ -27,30 +34,49 @@ final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
 
   if (query.trim().isEmpty) return [];
 
-  final mockService = ref.read(mockDataServiceProvider);
-  List<Article> results = await mockService.searchArticles(query);
+  try {
+    final newsService = ref.read(searchNewsServiceProvider);
+    final result = await newsService.searchNews(
+      query: query,
+      page: 1,
+      limit: 50,
+      onlyIndian: true,
+    );
 
-  // Apply category filter
-  if (filter != 'all') {
-    results = results.where((article) => article.category == filter).toList();
+    if (!result.isSuccess) {
+      throw Exception(result.message);
+    }
+
+    List<Article> results = result.articles;
+
+    // Apply category filter
+    if (filter != 'all') {
+      results = results.where((article) {
+        final articleCategory = article.category?.toLowerCase() ??
+            article.categoryDisplayName.toLowerCase();
+        return articleCategory == filter.toLowerCase();
+      }).toList();
+    }
+
+    // Apply sorting
+    switch (sort) {
+      case SearchSort.recent:
+        results.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+        break;
+      case SearchSort.relevant:
+        // Simple relevance: prioritize title matches, then description
+        results.sort((a, b) {
+          final aScore = _getRelevanceScore(a, query);
+          final bScore = _getRelevanceScore(b, query);
+          return bScore.compareTo(aScore);
+        });
+        break;
+    }
+
+    return results;
+  } catch (e) {
+    throw Exception('Search failed: $e');
   }
-
-  // Apply sorting
-  switch (sort) {
-    case SearchSort.recent:
-      results.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
-      break;
-    case SearchSort.relevant:
-      // Simple relevance: prioritize title matches, then description
-      results.sort((a, b) {
-        final aScore = _getRelevanceScore(a, query);
-        final bScore = _getRelevanceScore(b, query);
-        return bScore.compareTo(aScore);
-      });
-      break;
-  }
-
-  return results;
 });
 
 int _getRelevanceScore(Article article, String query) {
@@ -62,8 +88,9 @@ int _getRelevanceScore(Article article, String query) {
     score += 10;
   }
 
-  // Description matches
-  if (article.description.toLowerCase().contains(queryLower)) {
+  // Description matches - safely handle null
+  final description = article.description?.toLowerCase() ?? '';
+  if (description.contains(queryLower)) {
     score += 5;
   }
 
@@ -298,7 +325,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                       _buildFilterChip('All', 'all'),
                       _buildFilterChip('Sports', 'sports'),
                       _buildFilterChip('Business', 'business'),
-                      _buildFilterChip('Tech', 'tech'),
+                      _buildFilterChip('Technology', 'technology'),
                       _buildFilterChip('Health', 'health'),
                       _buildFilterChip('Finance', 'finance'),
                     ],
@@ -402,7 +429,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
           if (_searchHistory.isNotEmpty) ...[
             Row(
               children: [
-                Icon(
+                const Icon(
                   Icons.history,
                   color: AppColors.grey400,
                   size: 20,
@@ -447,7 +474,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.history,
                           size: 14,
                           color: AppColors.grey400,
@@ -472,7 +499,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
           // Trending Topics
           Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.trending_up,
                 color: AppColors.error,
                 size: 20,
@@ -536,7 +563,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                         ),
                   ),
                 ),
-                Icon(
+                const Icon(
                   Icons.arrow_forward_ios,
                   size: 14,
                   color: AppColors.grey400,
@@ -607,7 +634,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
 
   Widget _buildSearchResultCard(Article article) {
     return GestureDetector(
-      onTap: () => context.push('/article/${article.id}'),
+      onTap: () =>
+          context.push('/article/${article.uniqueId}'), // FIXED: Use uniqueId
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -623,26 +651,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         ),
         child: Row(
           children: [
-            // Article thumbnail
+            // Article thumbnail - FIXED: Use safeImageUrl
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: SizedBox(
                 width: 80,
                 height: 80,
-                child: Image.network(
-                  article.imageUrl,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return Container(
-                      color: AppColors.grey100,
-                      child: Icon(
-                        Icons.image_not_supported,
-                        color: AppColors.grey400,
-                        size: 24,
+                child: article.safeImageUrl.isNotEmpty
+                    ? Image.network(
+                        article.safeImageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(
+                            color: AppColors.grey100,
+                            child: const Icon(
+                              Icons.image_not_supported,
+                              color: AppColors.grey400,
+                              size: 24,
+                            ),
+                          );
+                        },
+                      )
+                    : Container(
+                        color: AppColors.grey100,
+                        child: const Icon(
+                          Icons.image_not_supported,
+                          color: AppColors.grey400,
+                          size: 24,
+                        ),
                       ),
-                    );
-                  },
-                ),
               ),
             ),
 
@@ -662,7 +699,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.getCategoryColor(article.category)
+                          color: AppColors.getCategoryColor(
+                                  article.categoryDisplayName)
                               .withOpacity(0.1),
                           borderRadius: BorderRadius.circular(4),
                         ),
@@ -671,7 +709,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                           style:
                               Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: AppColors.getCategoryColor(
-                                        article.category),
+                                        article.categoryDisplayName),
                                     fontWeight: FontWeight.w600,
                                     fontSize: 9,
                                   ),
@@ -679,7 +717,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        DateFormatter.formatToIST(article.publishedAt),
+                        article.timeAgo, // FIXED: Use timeAgo extension
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: AppColors.grey400,
                               fontSize: 10,
@@ -737,7 +775,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
+          const Icon(
             Icons.search_off,
             size: 80,
             color: AppColors.grey400,
@@ -798,7 +836,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
+          const Icon(
             Icons.error_outline,
             size: 80,
             color: AppColors.error,
@@ -851,56 +889,37 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   }
 
   void _toggleBookmark(Article article) {
-    // Simple approach - just show a placeholder message for now
-    // This will be replaced with real functionality once providers are sorted
-
-    final isCurrentlyBookmarked = article.isBookmarked;
-    final message =
-        isCurrentlyBookmarked ? 'Removed from bookmarks' : 'Added to bookmarks';
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.info,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
-// Alternative working version if you want to try with providers:
-  void _toggleBookmarkWithProvider(Article article) {
     try {
-      // Check if the bookmark providers are available
+      // Try to use real bookmark functionality
       final bookmarksNotifier = ref.read(bookmarksProvider.notifier);
-
-      // Try to toggle bookmark
       bookmarksNotifier.toggleBookmark(article);
 
-      // Show success message
+      final message = article.isBookmarked
+          ? 'Removed from bookmarks'
+          : 'Added to bookmarks';
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Bookmark updated!'),
+          content: Text(message),
           backgroundColor: AppColors.success,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
           ),
+          duration: const Duration(seconds: 2),
         ),
       );
     } catch (e) {
-      // If providers don't work, show error
+      // Fallback message if bookmark system isn't ready
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Bookmark feature coming soon!'),
+          content: const Text('Bookmark feature temporarily unavailable'),
           backgroundColor: AppColors.info,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
           ),
+          duration: const Duration(seconds: 2),
         ),
       );
     }

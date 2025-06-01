@@ -28,13 +28,16 @@ class BookmarkStorageService {
   // Add article to bookmarks
   static Future<bool> addBookmark(Article article) async {
     try {
+      // Use uniqueId for consistent identification
+      final articleKey = article.uniqueId;
+
       // Check if already bookmarked
-      if (isBookmarked(article.id)) {
+      if (isBookmarked(articleKey)) {
         return false;
       }
 
       final bookmark = BookmarkHiveModel.fromArticle(article);
-      await _bookmarkBox.put(article.id, bookmark);
+      await _bookmarkBox.put(articleKey, bookmark);
       return true;
     } catch (e) {
       print('Error adding bookmark: $e');
@@ -79,8 +82,10 @@ class BookmarkStorageService {
     }
 
     return _bookmarkBox.values
-        .where((bookmark) =>
-            bookmark.category.toLowerCase() == category.toLowerCase())
+        .where((bookmark) {
+          final bookmarkCategory = bookmark.category?.toLowerCase() ?? '';
+          return bookmarkCategory == category.toLowerCase();
+        })
         .map((bookmark) => bookmark.toArticle())
         .toList();
   }
@@ -90,11 +95,19 @@ class BookmarkStorageService {
     final queryLower = query.toLowerCase();
 
     return _bookmarkBox.values
-        .where((bookmark) =>
-            bookmark.title.toLowerCase().contains(queryLower) ||
-            bookmark.description.toLowerCase().contains(queryLower) ||
-            bookmark.source.toLowerCase().contains(queryLower) ||
-            bookmark.tags.any((tag) => tag.toLowerCase().contains(queryLower)))
+        .where((bookmark) {
+          final title = bookmark.title.toLowerCase();
+          final description = bookmark.description?.toLowerCase() ?? '';
+          final source = bookmark.source.toLowerCase();
+          final tagMatches = bookmark.tags.any(
+            (tag) => tag.toLowerCase().contains(queryLower),
+          );
+
+          return title.contains(queryLower) ||
+              description.contains(queryLower) ||
+              source.contains(queryLower) ||
+              tagMatches;
+        })
         .map((bookmark) => bookmark.toArticle())
         .toList();
   }
@@ -110,10 +123,10 @@ class BookmarkStorageService {
       return getBookmarkCount();
     }
 
-    return _bookmarkBox.values
-        .where((bookmark) =>
-            bookmark.category.toLowerCase() == category.toLowerCase())
-        .length;
+    return _bookmarkBox.values.where((bookmark) {
+      final bookmarkCategory = bookmark.category?.toLowerCase() ?? '';
+      return bookmarkCategory == category.toLowerCase();
+    }).length;
   }
 
   // Clear all bookmarks

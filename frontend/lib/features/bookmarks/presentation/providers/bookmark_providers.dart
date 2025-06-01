@@ -21,7 +21,7 @@ final bookmarkStatusProvider = Provider.family<bool, String>((ref, articleId) {
   return BookmarkStorageService.isBookmarked(articleId);
 });
 
-// Filtered bookmarks provider (by category)
+// Filtered bookmarks provider (by category) - handle nullable category
 final filteredBookmarksProvider =
     Provider.family<List<Article>, String>((ref, category) {
   final bookmarks = ref.watch(bookmarksProvider);
@@ -30,15 +30,18 @@ final filteredBookmarksProvider =
     return bookmarks;
   }
 
-  return bookmarks
-      .where(
-          (article) => article.category.toLowerCase() == category.toLowerCase())
-      .toList();
+  return bookmarks.where((article) {
+    // Handle nullable category field with safe access
+    final articleCategory = article.category?.toLowerCase() ??
+        article.categoryDisplayName.toLowerCase();
+    return articleCategory == category.toLowerCase();
+  }).toList();
 });
 
 // Search bookmarks provider
 final searchBookmarksProvider = StateProvider<String>((ref) => '');
 
+// Search bookmarks provider - handle nullable fields
 final searchedBookmarksProvider = Provider<List<Article>>((ref) {
   final query = ref.watch(searchBookmarksProvider);
   final bookmarks = ref.watch(bookmarksProvider);
@@ -51,7 +54,7 @@ final searchedBookmarksProvider = Provider<List<Article>>((ref) {
   return bookmarks
       .where((article) =>
           article.title.toLowerCase().contains(queryLower) ||
-          article.description.toLowerCase().contains(queryLower) ||
+          (article.description?.toLowerCase() ?? '').contains(queryLower) ||
           article.source.toLowerCase().contains(queryLower) ||
           article.tags.any((tag) => tag.toLowerCase().contains(queryLower)))
       .toList();
@@ -74,13 +77,12 @@ final bookmarkCountByCategoryProvider =
 final recentBookmarksProvider = Provider<List<Article>>((ref) {
   final bookmarks = ref.watch(bookmarksProvider);
 
-  // Sort by bookmark date (assuming we'll add this field)
+  // Sort by bookmark date and return first 5 items
   final sortedBookmarks = List<Article>.from(bookmarks);
-  // For now, just return first 5 items
   return sortedBookmarks.take(5).toList();
 });
 
-// Bookmarks Notifier
+// Bookmarks Notifier - handle nullable fields and use uniqueId
 class BookmarksNotifier extends StateNotifier<List<Article>> {
   BookmarksNotifier() : super([]) {
     _loadBookmarks();
@@ -116,13 +118,16 @@ class BookmarksNotifier extends StateNotifier<List<Article>> {
     }
   }
 
-  // Remove bookmark
-  Future<bool> removeBookmark(String articleId) async {
+  // Remove bookmark - use uniqueId for better matching
+  Future<bool> removeBookmark(String articleIdentifier) async {
     try {
-      final success = await BookmarkStorageService.removeBookmark(articleId);
+      final success =
+          await BookmarkStorageService.removeBookmark(articleIdentifier);
       if (success) {
-        // Remove from state
-        state = state.where((article) => article.id != articleId).toList();
+        // Remove from state - match by uniqueId
+        state = state.where((article) {
+          return article.uniqueId != articleIdentifier;
+        }).toList();
         return true;
       }
       return false;
@@ -132,13 +137,14 @@ class BookmarksNotifier extends StateNotifier<List<Article>> {
     }
   }
 
-  // Toggle bookmark
+  // Toggle bookmark - use uniqueId
   Future<bool> toggleBookmark(Article article) async {
+    final articleIdentifier = article.uniqueId;
     final isCurrentlyBookmarked =
-        BookmarkStorageService.isBookmarked(article.id);
+        BookmarkStorageService.isBookmarked(articleIdentifier);
 
     if (isCurrentlyBookmarked) {
-      return await removeBookmark(article.id);
+      return await removeBookmark(articleIdentifier);
     } else {
       return await addBookmark(article);
     }
@@ -166,18 +172,21 @@ class BookmarksNotifier extends StateNotifier<List<Article>> {
         await BookmarkStorageService.removeBookmark(articleId);
       }
 
-      // Update state
-      state =
-          state.where((article) => !articleIds.contains(article.id)).toList();
+      // Update state - use uniqueId for matching
+      state = state.where((article) {
+        return !articleIds.contains(article.uniqueId);
+      }).toList();
     } catch (e) {
       print('Error removing multiple bookmarks: $e');
     }
   }
 
-  // Get bookmark by ID
-  Article? getBookmarkById(String articleId) {
+  // Get bookmark by ID - use uniqueId for better matching
+  Article? getBookmarkById(String articleIdentifier) {
     try {
-      return state.firstWhere((article) => article.id == articleId);
+      return state.firstWhere((article) {
+        return article.uniqueId == articleIdentifier;
+      });
     } catch (e) {
       return null;
     }

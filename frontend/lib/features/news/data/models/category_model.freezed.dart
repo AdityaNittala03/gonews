@@ -27,6 +27,7 @@ mixin _$Category {
   int get articleCount => throw _privateConstructorUsedError;
   bool get isSelected => throw _privateConstructorUsedError;
   String? get description => throw _privateConstructorUsedError;
+  String? get slug => throw _privateConstructorUsedError;
 
   /// Serializes this Category to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -50,7 +51,8 @@ abstract class $CategoryCopyWith<$Res> {
       int colorValue,
       int articleCount,
       bool isSelected,
-      String? description});
+      String? description,
+      String? slug});
 }
 
 /// @nodoc
@@ -75,6 +77,7 @@ class _$CategoryCopyWithImpl<$Res, $Val extends Category>
     Object? articleCount = null,
     Object? isSelected = null,
     Object? description = freezed,
+    Object? slug = freezed,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -105,6 +108,10 @@ class _$CategoryCopyWithImpl<$Res, $Val extends Category>
           ? _value.description
           : description // ignore: cast_nullable_to_non_nullable
               as String?,
+      slug: freezed == slug
+          ? _value.slug
+          : slug // ignore: cast_nullable_to_non_nullable
+              as String?,
     ) as $Val);
   }
 }
@@ -124,7 +131,8 @@ abstract class _$$CategoryImplCopyWith<$Res>
       int colorValue,
       int articleCount,
       bool isSelected,
-      String? description});
+      String? description,
+      String? slug});
 }
 
 /// @nodoc
@@ -147,6 +155,7 @@ class __$$CategoryImplCopyWithImpl<$Res>
     Object? articleCount = null,
     Object? isSelected = null,
     Object? description = freezed,
+    Object? slug = freezed,
   }) {
     return _then(_$CategoryImpl(
       id: null == id
@@ -176,6 +185,10 @@ class __$$CategoryImplCopyWithImpl<$Res>
       description: freezed == description
           ? _value.description
           : description // ignore: cast_nullable_to_non_nullable
+              as String?,
+      slug: freezed == slug
+          ? _value.slug
+          : slug // ignore: cast_nullable_to_non_nullable
               as String?,
     ));
   }
@@ -218,7 +231,7 @@ class _$CategoryImpl implements _Category {
 
   @override
   String toString() {
-    return 'Category(id: $id, name: $name, icon: $icon, colorValue: $colorValue, articleCount: $articleCount, isSelected: $isSelected, description: $description)';
+    return 'Category(id: $id, name: $name, icon: $icon, colorValue: $colorValue, articleCount: $articleCount, isSelected: $isSelected, description: $description, slug: $slug)';
   }
 
   @override
@@ -236,13 +249,14 @@ class _$CategoryImpl implements _Category {
             (identical(other.isSelected, isSelected) ||
                 other.isSelected == isSelected) &&
             (identical(other.description, description) ||
-                other.description == description));
+                other.description == description) &&
+            (identical(other.slug, slug) || other.slug == slug));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, id, name, icon, colorValue,
-      articleCount, isSelected, description);
+      articleCount, isSelected, description, slug);
 
   /// Create a copy of Category
   /// with the given fields replaced by the non-null parameter values.
@@ -268,8 +282,8 @@ abstract class _Category implements Category {
       required final int colorValue,
       final int articleCount,
       final bool isSelected,
-      final String? slug,
-      final String? description}) = _$CategoryImpl;
+      final String? description,
+      final String? slug}) = _$CategoryImpl;
 
   factory _Category.fromJson(Map<String, dynamic> json) =
       _$CategoryImpl.fromJson;
@@ -288,6 +302,8 @@ abstract class _Category implements Category {
   bool get isSelected;
   @override
   String? get description;
+  @override
+  String? get slug;
 
   /// Create a copy of Category
   /// with the given fields replaced by the non-null parameter values.

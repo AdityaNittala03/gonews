@@ -58,14 +58,14 @@ dev_dependencies:
   riverpod_generator: ^2.3.9
   riverpod_lint: ^2.3.7
   freezed: ^2.4.7
-  json_serializable: ^6.7.1
+  json_serializable: ^6.7.1 # JSON Code Generation
   
   # Analysis
   flutter_lints: ^3.0.0
   very_good_analysis: ^5.1.0
 
-  # JSON Code Generation
-  json_serializable: ^6.7.1
+  
+
 
 flutter:
   uses-material-design: true

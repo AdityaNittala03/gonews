@@ -54,23 +54,26 @@ class AuthService {
       );
 
       if (response.isSuccess) {
-        final data = response.data as Map<String, dynamic>;
+        final responseData = response.data as Map<String, dynamic>;
 
-        // Store tokens
+        // ✅ FIXED: Handle your backend's nested response structure
+        final data = responseData['data'] as Map<String, dynamic>;
+
+        // Store tokens from nested data
         await _tokenService.storeTokens(
           accessToken: data['access_token'],
           refreshToken: data['refresh_token'],
           expiresInSeconds: data['expires_in'],
         );
 
-        // Store user data
+        // Store user data from nested data
         if (data['user'] != null) {
           final userData = BackendAdapters.userFromBackend(data['user']);
           await _tokenService.storeUserData(userData);
         }
 
         return AuthResult.success(
-          message: 'Account created successfully!',
+          message: responseData['message'] ?? 'Account created successfully!',
           user: data['user'] != null
               ? BackendAdapters.userFromBackend(data['user'])
               : null,
@@ -101,23 +104,26 @@ class AuthService {
       );
 
       if (response.isSuccess) {
-        final data = response.data as Map<String, dynamic>;
+        final responseData = response.data as Map<String, dynamic>;
 
-        // Store tokens
+        // ✅ FIXED: Handle your backend's nested response structure
+        final data = responseData['data'] as Map<String, dynamic>;
+
+        // Store tokens from nested data
         await _tokenService.storeTokens(
           accessToken: data['access_token'],
           refreshToken: data['refresh_token'],
           expiresInSeconds: data['expires_in'],
         );
 
-        // Store user data
+        // Store user data from nested data
         if (data['user'] != null) {
           final userData = BackendAdapters.userFromBackend(data['user']);
           await _tokenService.storeUserData(userData);
         }
 
         return AuthResult.success(
-          message: 'Welcome back!',
+          message: responseData['message'] ?? 'Welcome back!',
           user: data['user'] != null
               ? BackendAdapters.userFromBackend(data['user'])
               : null,

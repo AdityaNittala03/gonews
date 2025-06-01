@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/color_constants.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
-import '../../../../shared/widgets/animations/shimmer_widget.dart';
 import '../../../news/data/models/article_model.dart';
 import '../../../news/data/models/category_model.dart';
 import '../../../news/presentation/widgets/category_chip.dart';
@@ -64,15 +63,16 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
     final selectedBookmarks = ref.watch(selectedBookmarksProvider);
     final bookmarkCount = ref.watch(bookmarkCountProvider);
 
-    // Apply search filter to category-filtered results
+    // Apply search filter to category-filtered results - FIXED: Handle nullable category
     final displayBookmarks = _searchController.text.isEmpty
         ? filteredBookmarks
-        : bookmarks
-            .where((article) =>
-                _selectedCategory == 'all' ||
-                article.category.toLowerCase() ==
-                    _selectedCategory.toLowerCase())
-            .toList();
+        : bookmarks.where((article) {
+            if (_selectedCategory == 'all') return true;
+
+            final articleCategory = article.category?.toLowerCase() ??
+                article.categoryDisplayName.toLowerCase();
+            return articleCategory == _selectedCategory.toLowerCase();
+          }).toList();
 
     return Scaffold(
       backgroundColor: AppColors.getBackgroundColor(context),
@@ -279,8 +279,9 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
       itemCount: bookmarks.length,
       itemBuilder: (context, index) {
         final article = bookmarks[index];
+        // FIXED: Use uniqueId for selection state
         final isSelected =
-            ref.watch(selectedBookmarksProvider).contains(article.id);
+            ref.watch(selectedBookmarksProvider).contains(article.uniqueId);
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 16),
@@ -290,8 +291,8 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
             isSelected: isSelected,
             onTap: () => _handleBookmarkTap(article),
             onLongPress: () => _handleBookmarkLongPress(article),
-            onSelectionChanged: (selected) =>
-                _handleSelectionChanged(article.id, selected),
+            onSelectionChanged: (selected) => _handleSelectionChanged(
+                article.uniqueId, selected), // FIXED: Use uniqueId
             onRemove: () => _removeBookmark(article),
           ),
         );
@@ -355,17 +356,19 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
 
   void _handleBookmarkTap(Article article) {
     if (_isSelectionMode) {
-      _handleSelectionChanged(article.id,
-          !ref.read(selectedBookmarksProvider).contains(article.id));
+      _handleSelectionChanged(
+          article.uniqueId, // FIXED: Use uniqueId
+          !ref.read(selectedBookmarksProvider).contains(article.uniqueId));
     } else {
-      context.push('/article/${article.id}');
+      // FIXED: Use uniqueId for navigation
+      context.push('/article/${article.uniqueId}');
     }
   }
 
   void _handleBookmarkLongPress(Article article) {
     if (!_isSelectionMode) {
       _toggleSelectionMode();
-      _handleSelectionChanged(article.id, true);
+      _handleSelectionChanged(article.uniqueId, true); // FIXED: Use uniqueId
     }
   }
 
@@ -392,7 +395,8 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
 
   void _selectAllBookmarks() {
     final bookmarks = ref.read(filteredBookmarksProvider(_selectedCategory));
-    final articleIds = bookmarks.map((article) => article.id).toList();
+    // FIXED: Use uniqueId for all operations
+    final articleIds = bookmarks.map((article) => article.uniqueId).toList();
     ref.read(selectedBookmarksProvider.notifier).selectAll(articleIds);
   }
 
@@ -416,8 +420,10 @@ class _BookmarksScreenState extends ConsumerState<BookmarksScreen>
   }
 
   void _removeBookmark(Article article) async {
-    final success =
-        await ref.read(bookmarksProvider.notifier).removeBookmark(article.id);
+    // FIXED: Use uniqueId for removal
+    final success = await ref
+        .read(bookmarksProvider.notifier)
+        .removeBookmark(article.uniqueId);
     if (success) {
       _showSuccessSnackbar('Bookmark removed');
     } else {

@@ -17,25 +17,25 @@ class BookmarkHiveModel extends HiveObject {
   String title;
 
   @HiveField(3)
-  String description;
+  String? description; // Made nullable to match Article model
 
   @HiveField(4)
-  String content;
+  String? content; // Made nullable to match Article model
 
   @HiveField(5)
   String url;
 
   @HiveField(6)
-  String imageUrl;
+  String? imageUrl; // Made nullable to match Article model
 
   @HiveField(7)
   String source;
 
   @HiveField(8)
-  String author;
+  String? author; // Made nullable to match Article model
 
   @HiveField(9)
-  String category;
+  String? category; // Made nullable to match Article model
 
   @HiveField(10)
   DateTime publishedAt;
@@ -53,13 +53,13 @@ class BookmarkHiveModel extends HiveObject {
     required this.id,
     required this.articleId,
     required this.title,
-    required this.description,
-    required this.content,
+    this.description,
+    this.content,
     required this.url,
-    required this.imageUrl,
+    this.imageUrl,
     required this.source,
-    required this.author,
-    required this.category,
+    this.author,
+    this.category,
     required this.publishedAt,
     required this.bookmarkedAt,
     this.tags = const [],
@@ -69,20 +69,21 @@ class BookmarkHiveModel extends HiveObject {
   // Convert from Article model
   factory BookmarkHiveModel.fromArticle(Article article) {
     return BookmarkHiveModel(
-      id: '${article.id}_${DateTime.now().millisecondsSinceEpoch}',
-      articleId: article.id,
+      id: '${article.uniqueId}_${DateTime.now().millisecondsSinceEpoch}',
+      articleId: article.uniqueId, // Use uniqueId for consistency
       title: article.title,
-      description: article.description,
-      content: article.content,
+      description: article.description, // Now nullable
+      content: article.content, // Now nullable
       url: article.url,
-      imageUrl: article.imageUrl,
+      imageUrl: article.imageUrl, // Now nullable
       source: article.source,
-      author: article.author,
-      category: article.category,
+      author: article.author, // Now nullable
+      category: article.category ??
+          article.categoryDisplayName, // Handle null category
       publishedAt: article.publishedAt,
       bookmarkedAt: DateTime.now(),
       tags: article.tags,
-      readTime: article.readTime,
+      readTime: article.estimatedReadTime, // Use the safer getter
     );
   }
 

@@ -19,8 +19,7 @@ final selectedCategoryProvider = StateProvider<String>((ref) => 'all');
 final newsProvider =
     StateNotifierProvider<NewsNotifier, AsyncValue<List<Article>>>((ref) {
   final newsService = ref.watch(newsServiceProvider);
-  final selectedCategory = ref.watch(selectedCategoryProvider);
-  return NewsNotifier(newsService, selectedCategory);
+  return NewsNotifier(newsService, 'all'); // Always start with 'all'
 });
 
 // Categories provider - fetches from real API
@@ -52,14 +51,17 @@ final filteredNewsProvider = Provider<AsyncValue<List<Article>>>((ref) {
   return news; // NewsNotifier now handles category filtering internally
 });
 
-// Article by ID provider
-final articleByIdProvider = Provider.family<Article?, String>((ref, articleId) {
+// Article by ID provider - uses uniqueId for lookup
+final articleByIdProvider =
+    Provider.family<Article?, String>((ref, articleIdentifier) {
   final news = ref.watch(newsProvider);
 
   return news.when(
     data: (articles) {
       try {
-        return articles.firstWhere((article) => article.id == articleId);
+        // Find by uniqueId (which handles external_id and id fallback)
+        return articles
+            .firstWhere((article) => article.uniqueId == articleIdentifier);
       } catch (e) {
         return null;
       }
@@ -69,11 +71,11 @@ final articleByIdProvider = Provider.family<Article?, String>((ref, articleId) {
   );
 });
 
-// Related articles provider
+// Related articles provider - updated to work with new article lookup
 final relatedArticlesProvider =
-    Provider.family<List<Article>, String>((ref, articleId) {
+    Provider.family<List<Article>, String>((ref, articleIdentifier) {
   final news = ref.watch(newsProvider);
-  final currentArticle = ref.watch(articleByIdProvider(articleId));
+  final currentArticle = ref.watch(articleByIdProvider(articleIdentifier));
 
   return news.when(
     data: (articles) {
@@ -82,8 +84,10 @@ final relatedArticlesProvider =
       // Find articles from the same category, excluding the current article
       final relatedArticles = articles
           .where((article) =>
-              article.category == currentArticle.category &&
-              article.id != articleId)
+              (article.category ?? article.categoryDisplayName) ==
+                  (currentArticle.category ??
+                      currentArticle.categoryDisplayName) &&
+              article.uniqueId != currentArticle.uniqueId)
           .take(5) // Limit to 5 related articles
           .toList();
 
@@ -127,7 +131,7 @@ final breakingNewsProvider = Provider<List<Article>>((ref) {
 // News refresh provider
 final newsRefreshProvider = StateProvider<int>((ref) => 0);
 
-// Real News Notifier with API integration
+// Real News Notifier with API integration - Added mounted checks
 class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   final NewsService _newsService;
   String _currentCategory;
@@ -144,6 +148,7 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
   Future<void> loadNews({String? category, bool refresh = false}) async {
     try {
       if (refresh || category != _currentCategory) {
+        if (!mounted) return; // Check mounted before state update
         state = const AsyncLoading();
         _currentPage = 1;
         _hasMorePages = true;
@@ -169,41 +174,50 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
         );
       }
 
+      if (!mounted) return; // Check mounted after async operation
+
       if (result.isSuccess) {
         _hasMorePages = result.hasMorePages;
 
         if (refresh || _currentPage == 1) {
+          if (!mounted) return; // Check mounted before state update
           state = AsyncData(result.articles);
         } else {
           // Append to existing articles (pagination)
           final currentState = state;
           if (currentState is AsyncData<List<Article>>) {
             final updatedArticles = [...currentState.value, ...result.articles];
+            if (!mounted) return; // Check mounted before state update
             state = AsyncData(updatedArticles);
           }
         }
         _currentPage = result.currentPage;
       } else {
+        if (!mounted) return; // Check mounted before state update
         state = AsyncError(Exception(result.message), StackTrace.current);
       }
     } catch (error, stackTrace) {
+      if (!mounted) return; // Check mounted before state update
       state = AsyncError(error, stackTrace);
     }
   }
 
   // Refresh news
   Future<void> refreshNews() async {
+    if (!mounted) return; // Check mounted
     await loadNews(refresh: true);
   }
 
   // Load news by category
   Future<void> loadNewsByCategory(String category) async {
+    if (!mounted) return; // Check mounted
     await loadNews(category: category, refresh: true);
   }
 
   // Search news using real API
   Future<void> searchNews(String query) async {
     try {
+      if (!mounted) return; // Check mounted
       state = const AsyncLoading();
 
       final result = await _newsService.searchNews(
@@ -213,6 +227,8 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
         onlyIndian: true,
       );
 
+      if (!mounted) return; // Check mounted after async operation
+
       if (result.isSuccess) {
         state = AsyncData(result.articles);
         _currentPage = result.currentPage;
@@ -221,13 +237,14 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
         state = AsyncError(Exception(result.message), StackTrace.current);
       }
     } catch (error, stackTrace) {
+      if (!mounted) return; // Check mounted before state update
       state = AsyncError(error, stackTrace);
     }
   }
 
   // Load more articles (pagination)
   Future<void> loadMoreArticles() async {
-    if (_isLoadingMore || !_hasMorePages) return;
+    if (!mounted || _isLoadingMore || !_hasMorePages) return; // Check mounted
 
     final currentState = state;
     if (currentState is AsyncData<List<Article>>) {
@@ -251,6 +268,8 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
           );
         }
 
+        if (!mounted) return; // Check mounted after async operation
+
         if (result.isSuccess) {
           final updatedArticles = [...currentState.value, ...result.articles];
           state = AsyncData(updatedArticles);
@@ -266,14 +285,14 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     }
   }
 
-  // Get article by ID
-  Article? getArticleById(String articleId) {
+  // Get article by identifier (uniqueId)
+  Article? getArticleById(String articleIdentifier) {
     final currentState = state;
 
     if (currentState is AsyncData<List<Article>>) {
       try {
         return currentState.value
-            .firstWhere((article) => article.id == articleId);
+            .firstWhere((article) => article.uniqueId == articleIdentifier);
       } catch (e) {
         return null;
       }
@@ -284,11 +303,13 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
 
   // Update article (for bookmark status updates, etc.)
   void updateArticle(Article updatedArticle) {
+    if (!mounted) return; // Check mounted
+
     final currentState = state;
 
     if (currentState is AsyncData<List<Article>>) {
       final updatedArticles = currentState.value.map((article) {
-        if (article.id == updatedArticle.id) {
+        if (article.uniqueId == updatedArticle.uniqueId) {
           return updatedArticle;
         }
         return article;
@@ -298,12 +319,11 @@ class NewsNotifier extends StateNotifier<AsyncValue<List<Article>>> {
     }
   }
 
-  // Update category and reload news
+  // Update category and reload news - Added mounted check
   void updateCategory(String category) {
-    if (_currentCategory != category) {
-      _currentCategory = category;
-      loadNews(refresh: true);
-    }
+    if (!mounted || _currentCategory == category) return; // Check mounted
+    _currentCategory = category;
+    loadNews(refresh: true);
   }
 
   // Getters
@@ -336,10 +356,12 @@ final articleCountByCategoryProvider =
         return articles.length;
       }
 
-      return articles
-          .where((article) =>
-              article.category.toLowerCase() == category.toLowerCase())
-          .length;
+      return articles.where((article) {
+        // Handle nullable category field
+        final articleCategory = article.category?.toLowerCase() ??
+            article.categoryDisplayName.toLowerCase();
+        return articleCategory == category.toLowerCase();
+      }).length;
     },
     loading: () => 0,
     error: (error, stackTrace) => 0,

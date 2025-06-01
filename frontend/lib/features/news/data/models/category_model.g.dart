@@ -15,6 +15,7 @@ _$CategoryImpl _$$CategoryImplFromJson(Map<String, dynamic> json) =>
       articleCount: (json['articleCount'] as num?)?.toInt() ?? 0,
       isSelected: json['isSelected'] as bool? ?? false,
       description: json['description'] as String?,
+      slug: json['slug'] as String?,
     );
 
 Map<String, dynamic> _$$CategoryImplToJson(_$CategoryImpl instance) =>
@@ -26,4 +27,5 @@ Map<String, dynamic> _$$CategoryImplToJson(_$CategoryImpl instance) =>
       'articleCount': instance.articleCount,
       'isSelected': instance.isSelected,
       'description': instance.description,
+      'slug': instance.slug,
     };

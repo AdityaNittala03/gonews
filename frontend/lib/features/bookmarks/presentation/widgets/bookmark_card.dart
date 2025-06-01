@@ -94,7 +94,7 @@ class _BookmarkCardState extends State<BookmarkCard>
 
   Widget _buildCard(BuildContext context) {
     return Dismissible(
-      key: Key(widget.article.id),
+      key: Key(widget.article.uniqueId), // FIXED: Use uniqueId instead of id
       direction: DismissDirection.endToStart,
       background: _buildDismissBackground(),
       confirmDismiss: (direction) => _confirmDismiss(),
@@ -160,21 +160,22 @@ class _BookmarkCardState extends State<BookmarkCard>
           Expanded(
             child: Row(
               children: [
-                // Category badge
+                // Category badge - FIXED: Handle nullable category
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: _getCategoryColor(widget.article.category)
+                    color: _getCategoryColor(widget.article.categoryDisplayName)
                         .withOpacity(0.1),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    widget.article.category.toUpperCase(),
+                    widget.article.categoryDisplayName.toUpperCase(),
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: _getCategoryColor(widget.article.category),
+                          color: _getCategoryColor(
+                              widget.article.categoryDisplayName),
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.5,
                         ),
@@ -215,7 +216,8 @@ class _BookmarkCardState extends State<BookmarkCard>
   }
 
   Widget _buildImage() {
-    if (widget.article.imageUrl.isEmpty) {
+    // FIXED: Use safeImageUrl to handle nullable imageUrl
+    if (widget.article.safeImageUrl.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -231,7 +233,7 @@ class _BookmarkCardState extends State<BookmarkCard>
         child: Stack(
           children: [
             CachedNetworkImage(
-              imageUrl: widget.article.imageUrl,
+              imageUrl: widget.article.safeImageUrl, // FIXED: Use safeImageUrl
               width: double.infinity,
               height: 180,
               fit: BoxFit.cover,
@@ -239,7 +241,6 @@ class _BookmarkCardState extends State<BookmarkCard>
                 child: SizedBox(
                   height: 180,
                   width: double.infinity,
-                  //borderRadius: BorderRadius.all(Radius.circular(12)),
                 ),
               ),
               errorWidget: (context, url, error) => Container(
@@ -282,8 +283,8 @@ class _BookmarkCardState extends State<BookmarkCard>
               ),
             ),
 
-            // Reading time badge
-            if (widget.article.readTime > 0)
+            // Reading time badge - FIXED: Use estimatedReadTime
+            if (widget.article.estimatedReadTime > 0)
               Positioned(
                 top: 12,
                 right: 12,
@@ -297,7 +298,7 @@ class _BookmarkCardState extends State<BookmarkCard>
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    '${widget.article.readTime} min read',
+                    '${widget.article.estimatedReadTime} min read',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: AppColors.white,
                           fontWeight: FontWeight.w500,
@@ -330,9 +331,9 @@ class _BookmarkCardState extends State<BookmarkCard>
 
           const SizedBox(height: 8),
 
-          // Description
+          // Description - FIXED: Use safeDescription
           Text(
-            widget.article.description,
+            widget.article.safeDescription,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                   height: 1.4,
@@ -385,9 +386,9 @@ class _BookmarkCardState extends State<BookmarkCard>
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child: Row(
         children: [
-          // Author
-          if (widget.article.author.isNotEmpty) ...[
-            Icon(
+          // Author - FIXED: Use safeAuthor and handle empty check
+          if (widget.article.safeAuthor != 'Unknown Author') ...[
+            const Icon(
               Icons.person_outline,
               size: 16,
               color: AppColors.textSecondary,
@@ -395,7 +396,7 @@ class _BookmarkCardState extends State<BookmarkCard>
             const SizedBox(width: 4),
             Expanded(
               child: Text(
-                widget.article.author,
+                widget.article.safeAuthor,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.textSecondary,
                     ),
@@ -406,17 +407,17 @@ class _BookmarkCardState extends State<BookmarkCard>
             const Spacer(),
           ],
 
-          // Published date
+          // Published date - FIXED: Use timeAgo extension
           Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.schedule,
                 size: 16,
                 color: AppColors.textSecondary,
               ),
               const SizedBox(width: 4),
               Text(
-                DateFormatter.getTimeAgo(widget.article.publishedAt),
+                widget.article.timeAgo, // FIXED: Use timeAgo extension
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.textSecondary,
                     ),

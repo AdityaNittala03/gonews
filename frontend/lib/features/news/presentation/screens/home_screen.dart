@@ -287,36 +287,45 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget _buildNewsFeed(AsyncValue<List<Article>> newsAsync,
       Map<String, dynamic> paginationInfo) {
     return newsAsync.when(
-      data: (articles) => RefreshIndicator(
-        onRefresh: () => ref.read(newsProvider.notifier).refreshNews(),
-        color: AppColors.primary,
-        child: articles.isEmpty
-            ? _buildEmptyState()
-            : ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount:
-                    articles.length + (paginationInfo['hasMorePages'] ? 1 : 0),
-                itemBuilder: (context, index) {
-                  if (index == articles.length) {
-                    // Load more indicator
-                    return _buildLoadMoreIndicator(
-                        paginationInfo['isLoadingMore']);
-                  }
+      data: (articles) {
+        // 🔍 DEBUG: Print article IDs and external_ids for debugging
+        print('🔍 Article Debug Info:');
+        for (int i = 0; i < articles.length && i < 5; i++) {
+          print(
+              '  Article $i: id=${articles[i].id}, external_id=${articles[i].externalId}, title=${articles[i].title.substring(0, 50)}...');
+        }
 
-                  final article = articles[index];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ArticleCard(
-                      article: article,
-                      onTap: () => _navigateToArticle(article),
-                      onBookmark: () => _toggleBookmark(article),
-                      onShare: () => _shareArticle(article),
-                    ),
-                  );
-                },
-              ),
-      ),
+        return RefreshIndicator(
+          onRefresh: () => ref.read(newsProvider.notifier).refreshNews(),
+          color: AppColors.primary,
+          child: articles.isEmpty
+              ? _buildEmptyState()
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: articles.length +
+                      (paginationInfo['hasMorePages'] ? 1 : 0),
+                  itemBuilder: (context, index) {
+                    if (index == articles.length) {
+                      // Load more indicator
+                      return _buildLoadMoreIndicator(
+                          paginationInfo['isLoadingMore']);
+                    }
+
+                    final article = articles[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: ArticleCard(
+                        article: article,
+                        onTap: () => _navigateToArticle(article),
+                        onBookmark: () => _toggleBookmark(article),
+                        onShare: () => _shareArticle(article),
+                      ),
+                    );
+                  },
+                ),
+        );
+      },
       loading: () => _buildLoadingFeed(),
       error: (error, stack) => _buildErrorState(error.toString()),
     );
@@ -466,27 +475,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
+  // FIXED: Use external_id for article navigation instead of id
   void _navigateToArticle(Article article) {
-    context.push('/article/${article.id}');
+    // Use external_id if available, fallback to id
+    final articleIdentifier = article.externalId?.isNotEmpty == true
+        ? article.externalId!
+        : article.id.toString();
+
+    print(
+        '🔗 Navigating to article: ${article.title} with identifier: $articleIdentifier');
+    context.push('/article/${article.uniqueId}');
   }
 
   void _toggleBookmark(Article article) async {
     try {
-      // Use real bookmark service
+      // Use real bookmark service - still use id for bookmark operations
       final newsService = ref.read(newsServiceProvider);
+      final bookmarkId = article.externalId?.isNotEmpty == true
+          ? article.externalId!
+          : article.id.toString();
+
       final isCurrentlyBookmarked =
-          ref.read(bookmarkStatusProvider(article.id));
+          ref.read(bookmarkStatusProvider(bookmarkId));
 
       if (isCurrentlyBookmarked) {
-        final result = await newsService.removeBookmark(article.id);
+        final result = await newsService.removeBookmark(bookmarkId);
         if (result.isSuccess) {
-          ref.read(bookmarksProvider.notifier).removeBookmark(article.id);
+          ref.read(bookmarksProvider.notifier).removeBookmark(bookmarkId);
           _showSuccessSnackbar('Removed from bookmarks');
         } else {
           _showErrorSnackbar(result.message);
         }
       } else {
-        final result = await newsService.addBookmark(articleId: article.id);
+        final result = await newsService.addBookmark(articleId: bookmarkId);
         if (result.isSuccess) {
           ref.read(bookmarksProvider.notifier).toggleBookmark(article);
           _showSuccessSnackbar('Added to bookmarks');

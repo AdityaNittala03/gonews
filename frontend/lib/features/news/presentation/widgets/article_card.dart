@@ -1,14 +1,11 @@
 // lib/features/news/presentation/widgets/article_card.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
-import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 import '../../data/models/article_model.dart';
 
 class ArticleCard extends StatefulWidget {
@@ -37,8 +34,6 @@ class _ArticleCardState extends State<ArticleCard>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
-
-  bool _isPressed = false;
 
   @override
   void initState() {
@@ -133,37 +128,61 @@ class _ArticleCardState extends State<ArticleCard>
         children: [
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: CachedNetworkImage(
-              imageUrl: widget.article.imageUrl,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              placeholder: (context, url) => const ShimmerWidget(
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: ColoredBox(color: AppColors.grey200),
-                ),
-              ),
-              errorWidget: (context, url, error) => Container(
-                color: AppColors.grey100,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.image_not_supported,
-                      color: AppColors.grey400,
-                      size: 40,
+            child: widget
+                    .article.safeImageUrl.isNotEmpty // FIXED: Use safeImageUrl
+                ? CachedNetworkImage(
+                    imageUrl: widget.article.safeImageUrl,
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    placeholder: (context, url) => const ShimmerWidget(
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: ColoredBox(color: AppColors.grey200),
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Image not available',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    errorWidget: (context, url, error) => Container(
+                      color: AppColors.grey100,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.image_not_supported,
                             color: AppColors.grey400,
+                            size: 40,
                           ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Image not available',
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: AppColors.grey400,
+                                    ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-                ),
-              ),
-            ),
+                  )
+                : Container(
+                    color: AppColors.grey100,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.image_not_supported,
+                          color: AppColors.grey400,
+                          size: 40,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'No image available',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.grey400,
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
           ),
 
           // Trending Badge
@@ -183,7 +202,7 @@ class _ArticleCardState extends State<ArticleCard>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.trending_up,
                       color: AppColors.white,
                       size: 12,
@@ -266,14 +285,14 @@ class _ArticleCardState extends State<ArticleCard>
         const SizedBox(width: 8),
 
         // Reading Time
-        Icon(
+        const Icon(
           Icons.access_time,
           size: 12,
           color: AppColors.grey400,
         ),
         const SizedBox(width: 4),
         Text(
-          '${widget.article.estimatedReadTime} min read',
+          '${widget.article.estimatedReadTime} min read', // FIXED: Use estimatedReadTime
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AppColors.grey400,
                 fontSize: 11,
@@ -325,7 +344,7 @@ class _ArticleCardState extends State<ArticleCard>
 
   Widget _buildDescription() {
     return Text(
-      widget.article.description,
+      widget.article.safeDescription, // FIXED: Use safeDescription
       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
             color: AppColors.textSecondary,
             height: 1.4,
@@ -352,7 +371,7 @@ class _ArticleCardState extends State<ArticleCard>
               ),
               const SizedBox(height: 2),
               Text(
-                DateFormatter.formatToIST(widget.article.publishedAt),
+                widget.article.timeAgo, // FIXED: Use timeAgo extension
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.grey400,
                       fontSize: 11,
@@ -374,7 +393,7 @@ class _ArticleCardState extends State<ArticleCard>
                   color: AppColors.grey50,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(
+                child: const Icon(
                   Icons.share_outlined,
                   size: 16,
                   color: AppColors.grey600,
@@ -393,7 +412,7 @@ class _ArticleCardState extends State<ArticleCard>
                   color: AppColors.grey50,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(
+                child: const Icon(
                   Icons.more_horiz,
                   size: 16,
                   color: AppColors.grey600,
@@ -407,21 +426,15 @@ class _ArticleCardState extends State<ArticleCard>
   }
 
   void _handleTapDown() {
-    setState(() {
-      _isPressed = true;
-    });
     _animationController.forward();
   }
 
   void _handleTapUp() {
-    setState(() {
-      _isPressed = false;
-    });
     _animationController.reverse();
   }
 
   Color _getCategoryColor() {
-    return AppColors.getCategoryColor(widget.article.category);
+    return AppColors.getCategoryColor(widget.article.categoryDisplayName);
   }
 
   void _showMoreOptions(BuildContext context) {
@@ -532,7 +545,6 @@ class _ArticleCardState extends State<ArticleCard>
   }
 
   void _copyLink() {
-    // TODO: Implement copy link functionality
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Link copied to clipboard'),
@@ -546,7 +558,6 @@ class _ArticleCardState extends State<ArticleCard>
   }
 
   void _openInBrowser() {
-    // TODO: Implement open in browser functionality
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Opening in browser...'),
@@ -560,7 +571,6 @@ class _ArticleCardState extends State<ArticleCard>
   }
 
   void _reportArticle() {
-    // TODO: Implement report functionality
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content:
