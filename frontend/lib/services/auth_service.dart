@@ -311,6 +311,11 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     state = const AuthState.unauthenticated();
   }
 
+  Future<void> signOut() async {
+    // Just call the existing logout method
+    await logout();
+  }
+
   void clearError() {
     if (state is Error) {
       state = const AuthState.unauthenticated();

@@ -39,7 +39,16 @@ final categoriesProvider =
       isSelected: false,
       description: 'All categories',
     );
-    return [allCategory, ...result.categories];
+
+    // Map categories and rename "International" to "India"
+    final mappedCategories = result.categories.map((category) {
+      if (category.name.toLowerCase() == 'international') {
+        return category.copyWith(name: 'India');
+      }
+      return category;
+    }).toList();
+
+    return [allCategory, ...mappedCategories];
   } else {
     throw Exception(result.message);
   }

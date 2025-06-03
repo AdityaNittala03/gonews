@@ -31,6 +31,7 @@ import '../../features/profile/presentation/screens/privacy_policy_screen.dart';
 import '../../features/profile/presentation/screens/terms_of_service_screen.dart';
 import '../../features/profile/presentation/screens/storage_settings_screen.dart';
 import '../../core/services/storage_service.dart';
+import '../../features/donation/presentation/screens/upi_donation_screen.dart';
 
 // Router Provider
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -150,11 +151,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/donate',
         name: 'donate',
-        builder: (context, state) => const Placeholder(
-          child: Center(
-            child: Text('Donate Screen\n(Will be implemented in Week 3)'),
-          ),
-        ),
+        builder: (context, state) => const UpiDonationScreen(),
       ),
     ],
 

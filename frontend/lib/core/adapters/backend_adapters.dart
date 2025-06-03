@@ -12,6 +12,8 @@ class BackendAdapters {
   static Article articleFromBackend(Map<String, dynamic> backendData) {
     return Article(
       id: backendData['id']?.toString() ?? '0', // Convert int to string
+      externalId:
+          backendData['external_id']?.toString(), // FIXED: Added missing field
       title: backendData['title'] ?? '',
       description: backendData['description'] ?? '',
       content: backendData['content'] ?? '',
@@ -39,6 +41,7 @@ class BackendAdapters {
   static Map<String, dynamic> articleToBackend(Article article) {
     return {
       'id': int.tryParse(article.id) ?? 0,
+      'external_id': article.externalId, // FIXED: Added missing field
       'title': article.title,
       'description': article.description,
       'content': article.content,
@@ -354,7 +357,7 @@ class BackendAdapters {
     String? notes,
   }) {
     return {
-      'article_id': int.tryParse(articleId) ?? 0,
+      'article_id': articleId, // ✅ Keep as string
       if (notes != null) 'notes': notes,
     };
   }

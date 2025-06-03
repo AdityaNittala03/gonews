@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/color_constants.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../../shared/widgets/common/custom_text_field.dart';
+import '../../../../services/auth_service.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({Key? key}) : super(key: key);
@@ -28,6 +29,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
 
   bool _isLoading = false;
   bool _hasChanges = false;
+  bool _dataLoaded = false;
 
   @override
   void initState() {
@@ -67,11 +69,41 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
   }
 
   void _loadUserData() {
-    // Mock user data - will be replaced with real data in Phase 2
-    _nameController.text = "Demo User";
-    _emailController.text = "demo@gonews.com";
-    _phoneController.text = "+91 98765 43210";
-    _bioController.text = "News enthusiast and reader from India.";
+    // Get the current auth state
+    final authState = ref.read(authStateProvider);
+
+    if (authState is Authenticated) {
+      final user = authState.user;
+
+      // Load real user data from authentication state
+      _nameController.text = user['name']?.toString() ?? '';
+      _emailController.text = user['email']?.toString() ?? '';
+      _phoneController.text = user['phone']?.toString() ?? '';
+
+      // Handle bio - could be in preferences or a separate field
+      String bio = '';
+      if (user['bio'] != null) {
+        bio = user['bio'].toString();
+      } else if (user['preferences'] != null &&
+          user['preferences']['bio'] != null) {
+        bio = user['preferences']['bio'].toString();
+      }
+      _bioController.text = bio;
+
+      setState(() {
+        _dataLoaded = true;
+      });
+    } else {
+      // Fallback to demo data if not authenticated (shouldn't happen)
+      _nameController.text = "Demo User";
+      _emailController.text = "demo@gonews.com";
+      _phoneController.text = "+91 98765 43210";
+      _bioController.text = "News enthusiast and reader from India.";
+
+      setState(() {
+        _dataLoaded = true;
+      });
+    }
   }
 
   void _onFieldChanged() {
@@ -89,21 +121,23 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
       appBar: _buildAppBar(),
       body: FadeTransition(
         opacity: _fadeAnimation,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                _buildProfilePicture(),
-                const SizedBox(height: 32),
-                _buildFormFields(),
-                const SizedBox(height: 32),
-                _buildActionButtons(),
-              ],
-            ),
-          ),
-        ),
+        child: !_dataLoaded
+            ? const Center(child: CircularProgressIndicator())
+            : Form(
+                key: _formKey,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      _buildProfilePicture(),
+                      const SizedBox(height: 32),
+                      _buildFormFields(),
+                      const SizedBox(height: 32),
+                      _buildActionButtons(),
+                    ],
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -216,8 +250,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
           prefixIcon: Icons.phone_outlined,
           keyboardType: TextInputType.phone,
           validator: (value) {
-            if (value?.isEmpty ?? true) {
-              return 'Phone number is required';
+            // Phone is optional, so only validate format if provided
+            if (value != null && value.isNotEmpty) {
+              if (!RegExp(r'^\+?[\d\s\-\(\)]+$').hasMatch(value)) {
+                return 'Enter a valid phone number';
+              }
             }
             return null;
           },
@@ -319,15 +356,35 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
       _isLoading = true;
     });
 
-    // Simulate saving
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // Get the auth service
+      final authService = ref.read(authServiceProvider);
 
-    setState(() {
-      _isLoading = false;
-      _hasChanges = false;
-    });
+      // Update profile using real API call
+      final result = await authService.updateProfile(
+        name: _nameController.text.trim(),
+        phone: _phoneController.text.trim().isEmpty
+            ? null
+            : _phoneController.text.trim(),
+        // Note: You might need to add bio support to your backend
+        // For now, we'll skip bio updates until backend supports it
+      );
 
-    _showSuccessSnackbar('Profile updated successfully!');
+      if (result.isSuccess) {
+        setState(() {
+          _hasChanges = false;
+        });
+        _showSuccessSnackbar('Profile updated successfully!');
+      } else {
+        _showErrorSnackbar(result.message);
+      }
+    } catch (e) {
+      _showErrorSnackbar('Failed to update profile: ${e.toString()}');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   void _resetForm() {
@@ -348,7 +405,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
               setState(() {
                 _hasChanges = false;
               });
-              _showInfoSnackbar('Profile reset to default values');
+              _showInfoSnackbar('Profile reset to saved values');
             },
             style: TextButton.styleFrom(foregroundColor: AppColors.error),
             child: const Text('Reset'),
@@ -402,6 +459,19 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
     );
   }
 
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+
   void _showInfoSnackbar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -429,7 +499,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen>
   }
 }
 
-// Custom Text Field Widget
+// Custom Text Field Widget (keeping the same as before)
 class CustomTextField extends StatelessWidget {
   final TextEditingController controller;
   final String label;

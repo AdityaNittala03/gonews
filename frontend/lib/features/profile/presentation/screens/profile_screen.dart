@@ -1,4 +1,5 @@
 // frontend/lib/features/profile/presentation/screens/profile_screen.dart
+// FIXED: Now displays real authenticated user data instead of hardcoded demo data
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 import '../../../../core/providers/theme_provider.dart' as theme_provider;
 import '../../../../core/theme/app_theme.dart';
+import '../../../../services/auth_service.dart'; // ADDED: Import AuthService
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -25,10 +27,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  // Mock user data - will be replaced with actual user data in Phase 2
-  final String userName = "Demo User";
-  final String userEmail = "demo@gonews.com";
-  final String userAvatar = ""; // Empty for now
+  // REMOVED: Hardcoded mock user data
+  // FIXED: Now uses real authentication data dynamically
 
   @override
   void initState() {
@@ -67,6 +67,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   @override
   Widget build(BuildContext context) {
     final bookmarkCount = ref.watch(bookmarkCountProvider);
+    final authState = ref.watch(authStateProvider); // ADDED: Watch auth state
 
     return Scaffold(
       backgroundColor: AppColors.getBackgroundColor(context),
@@ -84,7 +85,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
-                _buildProfileHeader(),
+                _buildProfileHeader(authState), // FIXED: Pass auth state
                 const SizedBox(height: 32),
                 _buildStatsSection(bookmarkCount),
                 const SizedBox(height: 32),
@@ -173,7 +174,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  Widget _buildProfileHeader() {
+  // FIXED: Profile header now uses real authentication data
+  Widget _buildProfileHeader(AuthState authState) {
+    // Extract user data from authentication state
+    String userName = "Guest User";
+    String userEmail = "guest@gonews.com";
+    String userAvatar = "";
+
+    if (authState is Authenticated) {
+      userName = authState.userName.isNotEmpty ? authState.userName : "User";
+      userEmail = authState.userEmail.isNotEmpty
+          ? authState.userEmail
+          : "user@gonews.com";
+      // userAvatar remains empty for now - can be implemented later
+    }
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -222,7 +237,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
 
           const SizedBox(height: 16),
 
-          // User Name
+          // User Name - FIXED: Now shows real authenticated user name
           Text(
             userName,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -233,7 +248,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
 
           const SizedBox(height: 4),
 
-          // User Email
+          // User Email - FIXED: Now shows real authenticated user email
           Text(
             userEmail,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -663,9 +678,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   void _openDonation() {
-    _showComingSoonSnackbar('Donation via Razorpay');
+    context.push('/donate');
   }
 
+  // FIXED: Sign out now uses real AuthService
   void _signOut() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -687,9 +703,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
 
     if (confirmed == true) {
-      // TODO: Implement actual sign out logic
-      if (context.mounted) {
-        context.go('/signin');
+      // FIXED: Use real authentication service
+      try {
+        await ref.read(authStateProvider.notifier).signOut();
+        if (context.mounted) {
+          context.go('/signin');
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Sign out failed: ${e.toString()}'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
       }
     }
   }

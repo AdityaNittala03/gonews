@@ -505,19 +505,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   void _toggleBookmark(Article article) async {
     try {
-      // Use uniqueId for bookmark operations
-      final bookmarkId = article.uniqueId;
+      // Enhanced uniqueId logic with debugging
+      String bookmarkId;
+
+      // Debug: Print article ID information
+      print('🔍 Bookmark Debug - Article ID Info:');
+      print('  - article.id: ${article.id}');
+      print('  - article.externalId: ${article.externalId}');
+      print('  - article.uniqueId: ${article.uniqueId}');
+
+      // Use external_id if available, otherwise fall back to id
+      if (article.externalId != null && article.externalId!.isNotEmpty) {
+        bookmarkId = article.externalId!;
+        print('  ✅ Using external_id: $bookmarkId');
+      } else if (article.id.isNotEmpty && article.id != "0") {
+        bookmarkId = article.id;
+        print('  ⚠️ Falling back to id: $bookmarkId');
+      } else {
+        print('  ❌ No valid ID found for article: ${article.title}');
+        _showErrorSnackbar('Cannot bookmark article: Invalid article ID');
+        return;
+      }
 
       final newsService = ref.read(newsServiceProvider);
       final isCurrentlyBookmarked =
           ref.read(bookmarkStatusProvider(bookmarkId));
+
+      print(
+          '🔖 Bookmark operation: ${isCurrentlyBookmarked ? 'REMOVE' : 'ADD'} for ID: $bookmarkId');
 
       if (isCurrentlyBookmarked) {
         final result = await newsService.removeBookmark(bookmarkId);
         if (result.isSuccess) {
           ref.read(bookmarksProvider.notifier).removeBookmark(bookmarkId);
           _showSuccessSnackbar('Removed from bookmarks');
+          print('✅ Bookmark removed successfully');
         } else {
+          print('❌ Remove bookmark failed: ${result.message}');
           _showErrorSnackbar(result.message);
         }
       } else {
@@ -525,7 +549,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         if (result.isSuccess) {
           ref.read(bookmarksProvider.notifier).toggleBookmark(article);
           _showSuccessSnackbar('Added to bookmarks');
+          print('✅ Bookmark added successfully');
         } else {
+          print('❌ Add bookmark failed: ${result.message}');
           _showErrorSnackbar(result.message);
         }
       }
