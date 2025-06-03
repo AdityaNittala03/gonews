@@ -250,6 +250,9 @@ func Migrate(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_articles_featured ON articles(is_featured, published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_articles_tags ON articles USING GIN(tags)`,
 
+		// *** CRITICAL FIX: Add unique constraint for external_id ***
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_external_id_unique ON articles(external_id) WHERE external_id IS NOT NULL`,
+
 		// Indexes for Categories
 		`CREATE INDEX IF NOT EXISTS idx_categories_active ON categories(is_active, sort_order)`,
 		`CREATE INDEX IF NOT EXISTS idx_categories_slug ON categories(slug)`,

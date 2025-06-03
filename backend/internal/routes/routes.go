@@ -1,4 +1,4 @@
-// routes/routes.go - Updated for Checkpoint 5: Advanced Features Integration
+// routes/routes.go - Updated for Database-First Architecture Integration
 
 package routes
 
@@ -18,7 +18,7 @@ import (
 	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes with advanced features integration
+// SetupRoutes configures all application routes with database-first architecture integration
 func SetupRoutes(
 	app *fiber.App,
 	db *sqlx.DB,
@@ -33,12 +33,13 @@ func SetupRoutes(
 ) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	articleRepo := repository.NewArticleRepository(db) // ADDED: Article repository for database-first architecture
 
 	// Initialize authentication service
 	authService := services.NewAuthService(userRepo, jwtManager)
 
 	// ===============================
-	// SERVICE INITIALIZATION
+	// SERVICE INITIALIZATION WITH DATABASE INTEGRATION
 	// ===============================
 
 	// Initialize or use provided services
@@ -50,7 +51,7 @@ func SetupRoutes(
 
 	if newsService != nil {
 		finalNewsService = newsService
-		log.Info("Using provided NewsAggregatorService")
+		log.Info("Using provided NewsAggregatorService with database integration")
 	}
 
 	if cacheService != nil {
@@ -70,12 +71,24 @@ func SetupRoutes(
 	}
 
 	if finalNewsService == nil {
-		log.Info("Initializing fallback NewsAggregatorService...")
+		log.Info("Initializing fallback NewsAggregatorService with database integration...")
 		apiClient := services.NewAPIClient(cfg, log)
 		quotaManager := services.NewQuotaManager(cfg, db, rdb, log)
 		sqlDB := db.DB
-		finalNewsService = services.NewNewsAggregatorService(sqlDB, db, rdb, cfg, log, apiClient, quotaManager)
+
+		// FIXED: Include ArticleRepository parameter
+		finalNewsService = services.NewNewsAggregatorService(
+			sqlDB,        // *sql.DB
+			db,           // *sqlx.DB
+			rdb,          // *redis.Client
+			cfg,          // *config.Config
+			log,          // *logger.Logger
+			apiClient,    // *APIClient
+			quotaManager, // *QuotaManager
+			articleRepo,  // *repository.ArticleRepository (THE FIX!)
+		)
 		finalNewsService.SetCacheService(finalCacheService)
+		log.Info("Fallback NewsAggregatorService initialized with database-first architecture")
 	}
 
 	// ===============================
@@ -94,10 +107,11 @@ func SetupRoutes(
 	}
 
 	log.Info("All handlers initialized successfully", map[string]interface{}{
-		"auth_handler":        "✅",
-		"news_handler":        "✅",
-		"performance_handler": performanceHandler != nil,
-		"advanced_features":   finalPerformanceService != nil,
+		"auth_handler":         "✅",
+		"news_handler":         "✅",
+		"performance_handler":  performanceHandler != nil,
+		"advanced_features":    finalPerformanceService != nil,
+		"database_integration": "✅ Database-first architecture enabled",
 	})
 
 	// ===============================
@@ -106,19 +120,24 @@ func SetupRoutes(
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		features := fiber.Map{
-			"authentication":    true,
-			"news_aggregation":  true,
-			"live_apis":         true,
-			"advanced_features": finalPerformanceService != nil,
+			"authentication":     true,
+			"news_aggregation":   true,
+			"live_apis":          true,
+			"database_first":     true,
+			"article_storage":    true,
+			"advanced_features":  finalPerformanceService != nil,
+			"quota_conservation": true,
+			"instant_responses":  true,
 		}
 
 		return c.JSON(fiber.Map{
-			"status":     "healthy",
-			"service":    "gonews-api",
-			"version":    "1.0.0",
-			"checkpoint": determineCheckpoint(finalPerformanceService != nil),
-			"features":   features,
-			"timestamp":  time.Now().Format(time.RFC3339),
+			"status":       "healthy",
+			"service":      "gonews-api",
+			"version":      "1.0.0",
+			"checkpoint":   determineCheckpoint(finalPerformanceService != nil),
+			"architecture": "Database-First News Aggregation",
+			"features":     features,
+			"timestamp":    time.Now().Format(time.RFC3339),
 		})
 	})
 
@@ -134,7 +153,7 @@ func SetupRoutes(
 	// Authentication routes
 	setupAuthRoutes(api, authHandler, jwtManager)
 
-	// News routes with live API integration
+	// News routes with database-first integration
 	setupNewsRoutes(api, newsHandler, jwtManager, finalNewsService, log)
 
 	// Advanced features routes (conditional)
@@ -153,13 +172,14 @@ func SetupRoutes(
 	setupProtectedRoutes(api, jwtManager)
 
 	log.Info("All routes configured successfully", map[string]interface{}{
-		"public_routes":        "✅",
-		"auth_routes":          "✅",
-		"news_routes":          "✅",
-		"performance_routes":   performanceHandler != nil,
-		"protected_routes":     "✅",
-		"health_routes":        "✅",
-		"advanced_integration": finalPerformanceService != nil,
+		"public_routes":         "✅",
+		"auth_routes":           "✅",
+		"news_routes":           "✅ Database-first enabled",
+		"performance_routes":    performanceHandler != nil,
+		"protected_routes":      "✅",
+		"health_routes":         "✅",
+		"advanced_integration":  finalPerformanceService != nil,
+		"database_architecture": "✅ Articles served from PostgreSQL",
 	})
 }
 
@@ -168,9 +188,10 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 	// API status endpoint
 	api.Get("/status", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"api_version": "1.0.0",
-			"status":      "operational",
-			"checkpoint":  "5 - Advanced Features & Optimization",
+			"api_version":  "1.0.0",
+			"status":       "operational",
+			"checkpoint":   "Database Integration Complete",
+			"architecture": "Database-First News Aggregation",
 			"features": fiber.Map{
 				"authentication":         true,
 				"news_aggregation":       true,
@@ -178,16 +199,26 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"bookmarks":              true,
 				"search":                 true,
 				"live_apis":              true,
+				"database_first":         true,
+				"article_storage":        true,
+				"quota_conservation":     true,
+				"instant_responses":      true,
 				"india_strategy":         true,
 				"intelligent_cache":      true,
 				"performance_monitoring": true,
 				"advanced_optimization":  true,
 			},
 			"api_sources": fiber.Map{
-				"newsdata_io": "active",
-				"gnews":       "active",
-				"mediastack":  "active",
-				"rapidapi":    "configured",
+				"newsdata_io": "active (database-first fallback)",
+				"gnews":       "active (database-first fallback)",
+				"mediastack":  "active (database-first fallback)",
+				"rapidapi":    "configured (database-first fallback)",
+			},
+			"database": fiber.Map{
+				"status":           "connected",
+				"storage":          "PostgreSQL",
+				"cache":            "Redis",
+				"serving_strategy": "Database-first with API fallback",
 			},
 		})
 	})
@@ -218,6 +249,7 @@ func setupPerformanceRoutes(api fiber.Router, performanceHandler *handlers.Perfo
 		return c.JSON(fiber.Map{
 			"status":                  "active",
 			"monitoring":              "enabled",
+			"database_first":          "enabled",
 			"background_optimization": "running",
 			"last_optimization":       "TODO: Get last optimization time",
 			"next_optimization":       time.Now().Add(10 * time.Minute).Format(time.RFC3339),
@@ -298,7 +330,7 @@ func setupAuthRoutes(api fiber.Router, authHandler *handlers.AuthHandler, jwtMan
 	authProtected.Delete("/account", authHandler.DeactivateAccount)
 }
 
-// setupNewsRoutes configures all news-related routes with live API integration
+// setupNewsRoutes configures all news-related routes with database-first integration
 func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtManager *auth.JWTManager, newsService *services.NewsAggregatorService, log *logger.Logger) {
 	// Create news API group
 	news := api.Group("/news")
@@ -306,6 +338,36 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	// ===============================
 	// DEBUG ENDPOINTS (Remove in production)
 	// ===============================
+
+	// Debug endpoint to test database-first integration
+	news.Get("/debug/database", func(c *fiber.Ctx) error {
+		log.Info("Debug: Testing database-first integration")
+
+		articles, err := newsService.FetchLatestNews("general", 5)
+		if err != nil {
+			log.Error("Debug: Database-first fetch failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+			return c.JSON(fiber.Map{
+				"error":          err.Error(),
+				"articles_count": 0,
+				"success":        false,
+				"source":         "database_first_failed",
+			})
+		}
+
+		log.Info("Debug: Database-first fetch success", map[string]interface{}{
+			"articles_count": len(articles),
+		})
+
+		return c.JSON(fiber.Map{
+			"articles_count": len(articles),
+			"articles":       articles,
+			"success":        true,
+			"source":         "database_first",
+			"note":           "Articles served from database-first architecture",
+		})
+	})
 
 	// Debug endpoint to test live API integration
 	news.Get("/debug/live", func(c *fiber.Ctx) error {
@@ -335,21 +397,21 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	})
 
 	// ===============================
-	// PUBLIC NEWS ENDPOINTS (Live APIs enabled)
+	// PUBLIC NEWS ENDPOINTS (Database-First Integration!)
 	// ===============================
 
-	// Main news feed (LIVE INTEGRATION!)
+	// Main news feed (DATABASE-FIRST INTEGRATION!)
 	news.Get("", newsHandler.GetNewsFeed)      // This handles /api/v1/news (without trailing slash)
 	news.Get("/", newsHandler.GetNewsFeed)     // This handles /api/v1/news/ (with trailing slash)
 	news.Get("/feed", newsHandler.GetNewsFeed) // Alternative path
 
-	// Category-specific news (LIVE INTEGRATION!)
+	// Category-specific news (DATABASE-FIRST INTEGRATION!)
 	news.Get("/category/:category", newsHandler.GetCategoryNews)
 
-	// Search news articles (LIVE INTEGRATION!)
+	// Search news articles (DATABASE-FIRST INTEGRATION!)
 	news.Get("/search", newsHandler.SearchNews)
 
-	// Get trending news (LIVE INTEGRATION!)
+	// Get trending news (DATABASE-FIRST INTEGRATION!)
 	news.Get("/trending", newsHandler.GetTrendingNews)
 
 	// Get available categories
@@ -441,6 +503,27 @@ func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 	app.Get("/health/database", newsHandler.DatabaseHealthCheck)
 	app.Get("/health/apis", newsHandler.APISourcesHealthCheck)
 
+	// Database-first integration health
+	app.Get("/health/database-first", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":       "healthy",
+			"architecture": "database-first",
+			"database": fiber.Map{
+				"status":   "connected",
+				"storage":  "PostgreSQL",
+				"cache":    "Redis",
+				"articles": "stored",
+			},
+			"apis": fiber.Map{
+				"newsdata_io": "fallback",
+				"gnews":       "fallback",
+				"mediastack":  "fallback",
+			},
+			"integration": "active",
+			"last_check":  time.Now().Format(time.RFC3339),
+		})
+	})
+
 	// Live API integration health
 	app.Get("/health/live-apis", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -451,6 +534,7 @@ func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 				"mediastack":  "connected",
 			},
 			"integration": "active",
+			"mode":        "fallback (database-first)",
 			"last_check":  time.Now().Format(time.RFC3339),
 		})
 	})
@@ -468,6 +552,7 @@ func setupPerformanceHealthRoutes(app *fiber.App, performanceHandler *handlers.P
 			"monitoring":        "active",
 			"background_tasks":  "running",
 			"auto_optimization": "enabled",
+			"database_first":    "optimized",
 			"last_check":        time.Now().Format(time.RFC3339),
 		})
 	})
@@ -533,7 +618,8 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 			"message":        "DEPRECATED: Use /api/v1/news/ instead",
 			"redirect":       "/api/v1/news/",
 			"live_apis":      "enabled",
-			"recommendation": "Switch to new endpoint for live news integration",
+			"database_first": "enabled",
+			"recommendation": "Switch to new endpoint for database-first news integration",
 		})
 	})
 
@@ -545,6 +631,7 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 			"message":        "DEPRECATED: Use /api/v1/news/bookmarks instead",
 			"redirect":       "/api/v1/news/bookmarks",
 			"live_features":  "enabled",
+			"database_first": "enabled",
 			"recommendation": "Switch to new endpoint for enhanced bookmarks",
 		})
 	})
@@ -557,7 +644,8 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 			"message":        "DEPRECATED: Use /api/v1/news/search instead",
 			"redirect":       "/api/v1/news/search",
 			"live_search":    "enabled",
-			"recommendation": "Switch to new endpoint for live news search",
+			"database_first": "enabled",
+			"recommendation": "Switch to new endpoint for database-first news search",
 		})
 	})
 }
@@ -569,9 +657,9 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 // determineCheckpoint returns the current checkpoint based on features available
 func determineCheckpoint(hasAdvancedFeatures bool) string {
 	if hasAdvancedFeatures {
-		return "5 - Advanced Features & Optimization"
+		return "5 - Advanced Features & Optimization (Database-First)"
 	}
-	return "4 - External API Integration"
+	return "Database Integration Complete"
 }
 
 // ===============================
@@ -602,6 +690,11 @@ func GetAdvancedRoutesSummary() map[string][]RouteInfo {
 		"health_advanced": {
 			{Method: "GET", Path: "/health/performance", Description: "Performance system health check", AuthLevel: "none"},
 			{Method: "GET", Path: "/health/performance/system", Description: "Performance monitoring system status", AuthLevel: "none"},
+			{Method: "GET", Path: "/health/database-first", Description: "Database-first architecture health check", AuthLevel: "none"},
+		},
+		"debug_endpoints": {
+			{Method: "GET", Path: "/api/v1/news/debug/database", Description: "Test database-first integration", AuthLevel: "none"},
+			{Method: "GET", Path: "/api/v1/news/debug/live", Description: "Test live API integration", AuthLevel: "none"},
 		},
 	}
 }

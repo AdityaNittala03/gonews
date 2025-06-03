@@ -1,4 +1,5 @@
 // lib/features/news/presentation/screens/home_screen.dart
+// FIXED: Line 295 substring error and improved article handling
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -284,15 +285,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
+  // Helper function to safely get substring
+  String _getSafeSubstring(String text, int maxLength) {
+    if (text.isEmpty) return '';
+    return text.length <= maxLength
+        ? text
+        : '${text.substring(0, maxLength)}...';
+  }
+
   Widget _buildNewsFeed(AsyncValue<List<Article>> newsAsync,
       Map<String, dynamic> paginationInfo) {
     return newsAsync.when(
       data: (articles) {
-        // 🔍 DEBUG: Print article IDs and external_ids for debugging
+        // 🔍 DEBUG: Print article IDs and external_ids for debugging - FIXED
+        print(
+            '🌐 API: Successfully fetched ${articles.length} articles from database-first backend');
         print('🔍 Article Debug Info:');
         for (int i = 0; i < articles.length && i < 5; i++) {
+          final article = articles[i];
+          final safeTitle = _getSafeSubstring(article.title, 50);
+
           print(
-              '  Article $i: id=${articles[i].id}, external_id=${articles[i].externalId}, title=${articles[i].title.substring(0, 50)}...');
+              '  Article $i: id=${article.id}, external_id=${article.externalId}, title=$safeTitle');
+          print(
+              '    - image_url: ${article.imageUrl?.isNotEmpty == true ? "✅ Available" : "❌ Missing"}');
+          print('    - is_indian: ${article.isIndianContent}');
         }
 
         return RefreshIndicator(
@@ -475,26 +492,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  // FIXED: Use external_id for article navigation instead of id
+  // IMPROVED: Better article navigation with proper ID handling
   void _navigateToArticle(Article article) {
-    // Use external_id if available, fallback to id
-    final articleIdentifier = article.externalId?.isNotEmpty == true
-        ? article.externalId!
-        : article.id.toString();
+    // Use the uniqueId property from ArticleExtension
+    final articleIdentifier = article.uniqueId;
 
     print(
-        '🔗 Navigating to article: ${article.title} with identifier: $articleIdentifier');
-    context.push('/article/${article.uniqueId}');
+        '🔗 Navigating to article: ${_getSafeSubstring(article.title, 30)} with identifier: $articleIdentifier');
+
+    context.push('/article/$articleIdentifier');
   }
 
   void _toggleBookmark(Article article) async {
     try {
-      // Use real bookmark service - still use id for bookmark operations
-      final newsService = ref.read(newsServiceProvider);
-      final bookmarkId = article.externalId?.isNotEmpty == true
-          ? article.externalId!
-          : article.id.toString();
+      // Use uniqueId for bookmark operations
+      final bookmarkId = article.uniqueId;
 
+      final newsService = ref.read(newsServiceProvider);
       final isCurrentlyBookmarked =
           ref.read(bookmarkStatusProvider(bookmarkId));
 
@@ -516,6 +530,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         }
       }
     } catch (e) {
+      print('❌ Bookmark error: ${e.toString()}');
       _showErrorSnackbar('Failed to update bookmark: ${e.toString()}');
     }
   }

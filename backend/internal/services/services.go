@@ -1,9 +1,12 @@
 // internal/services/services.go
+// UPDATED: Database-First Architecture Implementation
+// THE FIX: Integration with ArticleRepository for database storage pipeline
 
 package services
 
 import (
 	"backend/internal/config"
+	"backend/internal/repository"
 	"backend/pkg/logger"
 	"context"
 	"crypto/sha256"
@@ -22,39 +25,52 @@ import (
 )
 
 // ===============================
-// SERVICE CONTAINER
+// SERVICE CONTAINER (UPDATED)
 // ===============================
 
-// Services holds all service dependencies
+// Services holds all service dependencies with repository integration
 type Services struct {
 	NewsAggregator *NewsAggregatorService
-	Auth           *AuthService // Keep existing auth service
+	Auth           *AuthService
 	Cache          *CacheService
-	// We'll add more services later (User, etc.)
+
+	// Repository layer integration
+	ArticleRepo *repository.ArticleRepository
+	SearchRepo  *repository.SearchRepository
+	UserRepo    *repository.UserRepository
 }
 
-// NewServices creates a new services container with enhanced news aggregation
+// NewServices creates a new services container with database integration
 func NewServices(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, cfg *config.Config, log *logger.Logger) *Services {
+	// Initialize repositories
+	articleRepo := repository.NewArticleRepository(sqlxDB)
+	searchRepo := repository.NewSearchRepository(sqlxDB)
+	userRepo := repository.NewUserRepository(sqlxDB)
+
 	// Create API client and quota manager
 	apiClient := NewAPIClient(cfg, log)
 	quotaManager := NewQuotaManager(cfg, sqlxDB, redis, log)
 	cacheService := NewCacheService(redis, cfg, log)
 
-	newsService := NewNewsAggregatorService(db, sqlxDB, redis, cfg, log, apiClient, quotaManager)
+	// Create news service with repository integration
+	newsService := NewNewsAggregatorService(db, sqlxDB, redis, cfg, log, apiClient, quotaManager, articleRepo)
 	newsService.SetCacheService(cacheService)
 
 	return &Services{
 		NewsAggregator: newsService,
 		Cache:          cacheService,
+		ArticleRepo:    articleRepo,
+		SearchRepo:     searchRepo,
+		UserRepo:       userRepo,
 		// Auth: NewAuthService(...), // Initialize when needed
 	}
 }
 
 // ===============================
-// NEWS AGGREGATION SERVICE
+// NEWS AGGREGATION SERVICE (UPDATED WITH DATABASE INTEGRATION)
 // ===============================
 
-// NewsAggregatorService handles intelligent news aggregation with live API integration
+// NewsAggregatorService handles intelligent news aggregation with database-first architecture
 type NewsAggregatorService struct {
 	// Database connections
 	db     *sql.DB
@@ -67,6 +83,9 @@ type NewsAggregatorService struct {
 	apiClient    *APIClient
 	quotaManager *QuotaManager
 	cacheService *CacheService
+
+	// Repository integration (THE CRITICAL ADDITION)
+	articleRepo *repository.ArticleRepository
 
 	// Content processing
 	deduplicator    *ContentDeduplicator
@@ -85,20 +104,12 @@ type NewsAggregatorService struct {
 	wg       sync.WaitGroup
 }
 
-// Custom errors for news aggregation
-var (
-	ErrNoAPIQuotaAvailable = errors.New("no API quota available for news fetching")
-	ErrAllAPISourcesFailed = errors.New("all API sources failed to fetch news")
-	ErrInvalidCategory     = errors.New("invalid news category")
-	ErrProcessingFailed    = errors.New("news processing failed")
-)
-
 // ===============================
-// CONSTRUCTOR & INITIALIZATION
+// CONSTRUCTOR & INITIALIZATION (UPDATED)
 // ===============================
 
-// NewNewsAggregatorService creates an enhanced news aggregation service
-func NewNewsAggregatorService(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, cfg *config.Config, log *logger.Logger, apiClient *APIClient, quotaManager *QuotaManager) *NewsAggregatorService {
+// NewNewsAggregatorService creates an enhanced news aggregation service with database integration
+func NewNewsAggregatorService(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, cfg *config.Config, log *logger.Logger, apiClient *APIClient, quotaManager *QuotaManager, articleRepo *repository.ArticleRepository) *NewsAggregatorService {
 	// Load IST timezone
 	istLocation, _ := time.LoadLocation("Asia/Kolkata")
 
@@ -110,6 +121,7 @@ func NewNewsAggregatorService(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, 
 		logger:       log,
 		apiClient:    apiClient,
 		quotaManager: quotaManager,
+		articleRepo:  articleRepo, // THE CRITICAL INTEGRATION
 		istLocation:  istLocation,
 		workers:      10, // 10 concurrent workers
 		stopChan:     make(chan struct{}),
@@ -122,31 +134,284 @@ func NewNewsAggregatorService(db *sql.DB, sqlxDB *sqlx.DB, redis *redis.Client, 
 	// Start worker pool
 	service.startWorkers()
 
-	log.Info("News Aggregator Service initialized", map[string]interface{}{
-		"workers": service.workers,
-		"quotas":  cfg.GetSimpleAPIQuotas(),
+	log.Info("News Aggregator Service initialized with database integration", map[string]interface{}{
+		"workers":          service.workers,
+		"quotas":           cfg.GetSimpleAPIQuotas(),
+		"database_enabled": true,
+		"repository_ready": articleRepo != nil,
 	})
 
 	return service
 }
 
-// SetCacheService sets the cache service (called after cache service is created)
-func (s *NewsAggregatorService) SetCacheService(cache *CacheService) {
-	s.cacheService = cache
-}
-
 // ===============================
-// LIVE NEWS FETCHING METHODS
+// DATABASE-FIRST NEWS FETCHING METHODS (THE FIX)
 // ===============================
 
-// FetchLatestNews fetches news from multiple APIs concurrently using live integration
+// FetchLatestNews fetches news with DATABASE-FIRST architecture (FIXED!)
 func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*models.Article, error) {
-	s.logger.Info("Starting live news fetch", map[string]interface{}{
+	s.logger.Info("Starting database-first news fetch", map[string]interface{}{
 		"category": category,
 		"limit":    limit,
 	})
 
-	// Check cache first
+	// STEP 1: Try to get news from DATABASE FIRST (THE FIX!)
+	articles, err := s.getNewsFromDatabase(category, limit)
+	if err == nil && len(articles) >= limit {
+		s.logger.Info("Serving news from database", map[string]interface{}{
+			"category": category,
+			"count":    len(articles),
+			"source":   "database",
+		})
+		return articles, nil
+	}
+
+	s.logger.Info("Insufficient database content, fetching from APIs", map[string]interface{}{
+		"category":       category,
+		"database_count": len(articles),
+		"required":       limit,
+		"fetching_fresh": true,
+	})
+
+	// STEP 2: If insufficient, fetch from APIs (existing logic)
+	freshArticles, err := s.fetchFromAPIsAndCache(category, limit)
+	if err != nil {
+		// If API fetch fails, return whatever we have from database
+		if len(articles) > 0 {
+			s.logger.Warn("API fetch failed, returning database articles", map[string]interface{}{
+				"category":       category,
+				"database_count": len(articles),
+				"error":          err.Error(),
+			})
+			return articles, nil
+		}
+		return nil, err
+	}
+
+	// STEP 3: SAVE NEW ARTICLES TO DATABASE (THE MISSING PIECE!)
+	if len(freshArticles) > 0 {
+		err = s.saveArticlesToDatabase(freshArticles)
+		if err != nil {
+			s.logger.Error("Failed to save articles to database", map[string]interface{}{
+				"error": err.Error(),
+				"count": len(freshArticles),
+			})
+			// Continue even if save fails - we can still return the articles
+		} else {
+			s.logger.Info("Successfully saved articles to database", map[string]interface{}{
+				"count":    len(freshArticles),
+				"category": category,
+			})
+		}
+	}
+
+	// STEP 4: Combine database + fresh articles and deduplicate
+	allArticles := append(articles, freshArticles...)
+	deduplicatedArticles := s.deduplicateArticles(allArticles)
+
+	// Limit to requested count
+	if len(deduplicatedArticles) > limit {
+		deduplicatedArticles = deduplicatedArticles[:limit]
+	}
+
+	s.logger.Info("Database-first fetch completed", map[string]interface{}{
+		"category":       category,
+		"total_articles": len(deduplicatedArticles),
+		"database_src":   len(articles),
+		"api_src":        len(freshArticles),
+	})
+
+	return deduplicatedArticles, nil
+}
+
+// getNewsFromDatabase retrieves articles from database first (DATABASE-FIRST APPROACH)
+func (s *NewsAggregatorService) getNewsFromDatabase(category string, limit int) ([]*models.Article, error) {
+	// Convert category name to slug if needed
+	categorySlug := category
+	if category == "general" || category == "" {
+		categorySlug = "all"
+	}
+
+	// Get recent articles from database
+	articles, err := s.articleRepo.GetRecentArticles(categorySlug, limit)
+	if err != nil {
+		s.logger.Error("Failed to get articles from database", map[string]interface{}{
+			"error":    err.Error(),
+			"category": categorySlug,
+		})
+		return []*models.Article{}, nil // Return empty instead of error to allow API fallback
+	}
+
+	s.logger.Debug("Retrieved articles from database", map[string]interface{}{
+		"category": categorySlug,
+		"count":    len(articles),
+	})
+
+	return articles, nil
+}
+
+// inferCategoryFromContent infers category from article content (title + description)
+func (s *NewsAggregatorService) inferCategoryFromContent(title, description string) string {
+	content := strings.ToLower(title + " " + description)
+
+	if strings.Contains(content, "politics") || strings.Contains(content, "government") ||
+		strings.Contains(content, "election") || strings.Contains(content, "congress") ||
+		strings.Contains(content, "bjp") || strings.Contains(content, "modi") {
+		return "politics"
+	}
+	if strings.Contains(content, "business") || strings.Contains(content, "stock") ||
+		strings.Contains(content, "market") || strings.Contains(content, "economy") ||
+		strings.Contains(content, "ipo") || strings.Contains(content, "gst") {
+		return "business"
+	}
+	if strings.Contains(content, "cricket") || strings.Contains(content, "sports") ||
+		strings.Contains(content, "ipl") {
+		return "sports"
+	}
+	if strings.Contains(content, "technology") || strings.Contains(content, "tech") {
+		return "technology"
+	}
+
+	return "top-stories" // Default fallback
+}
+
+// saveArticlesToDatabase saves articles to database (THE MISSING PIECE!)
+func (s *NewsAggregatorService) saveArticlesToDatabase(articles []*models.Article) error {
+	if len(articles) == 0 {
+		return nil
+	}
+
+	// Process articles for database storage
+	processedArticles := s.processArticlesForDatabase(articles)
+
+	// Save to database using repository
+	err := s.articleRepo.SaveArticles(processedArticles)
+	if err != nil {
+		return fmt.Errorf("failed to save articles to database: %w", err)
+	}
+
+	s.logger.Info("Articles saved to database successfully", map[string]interface{}{
+		"count": len(processedArticles),
+	})
+
+	return nil
+}
+
+// processArticlesForDatabase processes articles for database storage
+func (s *NewsAggregatorService) processArticlesForDatabase(articles []*models.Article) []*models.Article {
+	var processedArticles []*models.Article
+
+	for _, article := range articles {
+		// Create a copy to avoid modifying original
+		processed := *article
+		processed.ID = 0
+
+		// Generate external ID if not present
+		if processed.ExternalID == nil || *processed.ExternalID == "" {
+			externalID := s.generateExternalID(article.URL, article.Title)
+			processed.ExternalID = &externalID
+		}
+
+		// Set category ID from category mapping if needed
+		if processed.CategoryID == nil {
+			// Set default category based on context
+			var defaultCategoryID int
+			_, slugToID, err := s.articleRepo.GetCategoryMapping()
+			if err == nil {
+				// Try to infer category from content or use "general"
+				categorySlug := s.inferCategoryFromContent(processed.Title, s.getStringValue(processed.Description))
+				if categoryID, exists := slugToID[categorySlug]; exists {
+					defaultCategoryID = categoryID
+				} else if generalID, exists := slugToID["top-stories"]; exists {
+					defaultCategoryID = generalID // Fallback to "Top Stories"
+				} else {
+					defaultCategoryID = 1 // Hard fallback to ID 1
+				}
+				processed.CategoryID = &defaultCategoryID
+			}
+		}
+
+		// Apply content analysis
+		processed.IsIndianContent = s.contentAnalyzer.IsIndianContent(
+			processed.Title,
+			s.getStringValue(processed.Description),
+			processed.Source,
+		)
+
+		processed.RelevanceScore = s.contentAnalyzer.CalculateRelevanceScore(
+			processed.Title,
+			s.getStringValue(processed.Description),
+			s.getCategoryName(processed.Category),
+		)
+
+		processed.SentimentScore = s.contentAnalyzer.AnalyzeSentiment(
+			processed.Title,
+			s.getStringValue(processed.Description),
+		)
+
+		// Calculate word count and reading time
+		content := processed.Title + " " + s.getStringValue(processed.Description) + " " + s.getStringValue(processed.Content)
+		wordCount := len(strings.Fields(content))
+		processed.WordCount = wordCount
+		processed.ReadingTimeMinutes = maxInt(1, wordCount/200) // Assume 200 words per minute
+
+		// Set timestamps
+		now := time.Now()
+		processed.FetchedAt = now
+		if processed.CreatedAt.IsZero() {
+			processed.CreatedAt = now
+		}
+		processed.UpdatedAt = now
+
+		// Set defaults
+		processed.IsActive = true
+		if processed.Tags == nil {
+			processed.Tags = []string{}
+		}
+
+		processedArticles = append(processedArticles, &processed)
+	}
+
+	return processedArticles
+}
+
+// generateExternalID creates a unique external ID for an article
+func (s *NewsAggregatorService) generateExternalID(url, title string) string {
+	// Create a hash from URL and title for uniqueness
+	hash := sha256.Sum256([]byte(url + "|" + title))
+	return hex.EncodeToString(hash[:])[:16] // Use first 16 characters
+}
+
+// Helper functions
+func (s *NewsAggregatorService) getStringValue(ptr *string) string {
+	if ptr == nil {
+		return ""
+	}
+	return *ptr
+}
+
+func (s *NewsAggregatorService) getCategoryName(category *models.Category) string {
+	if category == nil {
+		return "general"
+	}
+	return category.Name
+}
+
+// maxInt returns the maximum of two integers (renamed to avoid conflict)
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// ===============================
+// API FETCHING (PRESERVED EXISTING LOGIC)
+// ===============================
+
+// fetchFromAPIsAndCache fetches from external APIs with existing logic
+func (s *NewsAggregatorService) fetchFromAPIsAndCache(category string, limit int) ([]*models.Article, error) {
+	// Check cache first (preserve existing cache logic)
 	if s.cacheService != nil {
 		cacheKey := fmt.Sprintf("news:%s:%d", category, limit)
 		if cachedArticles, found, err := s.cacheService.GetArticles(context.Background(), cacheKey, category); err == nil && found && len(cachedArticles) > 0 {
@@ -163,7 +428,7 @@ func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*
 		}
 	}
 
-	// Fetch from multiple APIs concurrently
+	// Fetch from multiple APIs concurrently (EXISTING LOGIC PRESERVED)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var allArticles []*models.Article
@@ -277,7 +542,7 @@ func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*
 		return nil, fmt.Errorf("no articles fetched from any source")
 	}
 
-	// Apply India-first content strategy
+	// Apply India-first content strategy (EXISTING LOGIC PRESERVED)
 	indianArticles, globalArticles := s.categorizeByOrigin(allArticles)
 
 	// Target: 75% Indian, 25% global
@@ -312,10 +577,9 @@ func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*
 	// Deduplicate articles
 	deduplicatedArticles := s.deduplicateArticles(finalArticles)
 
-	// Cache the results
+	// Cache the results (PRESERVE EXISTING CACHE LOGIC)
 	if s.cacheService != nil {
 		cacheKey := fmt.Sprintf("news:%s:%d", category, limit)
-		//ttl := s.getDynamicTTL(category)
 
 		// Convert []*models.Article to []models.Article for cache service
 		var articles []models.Article
@@ -330,7 +594,7 @@ func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*
 		}
 	}
 
-	s.logger.Info("Successfully fetched and processed news", map[string]interface{}{
+	s.logger.Info("Successfully fetched and processed news from APIs", map[string]interface{}{
 		"category":        category,
 		"total_fetched":   len(allArticles),
 		"after_dedup":     len(deduplicatedArticles),
@@ -342,21 +606,25 @@ func (s *NewsAggregatorService) FetchLatestNews(category string, limit int) ([]*
 	return deduplicatedArticles, nil
 }
 
-// FetchNewsByCategory fetches news for a specific category with India-first strategy
+// ===============================
+// UPDATED API METHODS WITH DATABASE INTEGRATION
+// ===============================
+
+// FetchNewsByCategory fetches news for a specific category with database-first strategy
 func (s *NewsAggregatorService) FetchNewsByCategory(category string, limit int) ([]*models.Article, error) {
 	return s.FetchLatestNews(category, limit)
 }
 
-// SearchNews searches for news articles across all sources
+// SearchNews searches for news articles with database integration
 func (s *NewsAggregatorService) SearchNews(query string, category string, limit int) ([]*models.Article, error) {
-	s.logger.Info("Searching news", map[string]interface{}{
+	s.logger.Info("Searching news with database integration", map[string]interface{}{
 		"query":    query,
 		"category": category,
 		"limit":    limit,
 	})
 
-	// For search, we'll use our existing methods but filter by query
-	// First get general articles
+	// First try database search (if search repo is available)
+	// For now, fallback to existing search logic
 	articles, err := s.FetchLatestNews(category, limit*2)
 	if err != nil {
 		return nil, err
@@ -373,15 +641,68 @@ func (s *NewsAggregatorService) SearchNews(query string, category string, limit 
 	return filteredArticles, nil
 }
 
-// GetTrendingNews fetches trending news with emphasis on Indian content
+// GetTrendingNews fetches trending news with database integration
 func (s *NewsAggregatorService) GetTrendingNews(limit int) ([]*models.Article, error) {
-	// Trending typically means recent and popular
-	// We'll fetch from multiple sources and prioritize recent articles
+	// Try to get trending from database first
+	if s.articleRepo != nil {
+		trendingArticles, err := s.articleRepo.GetTrendingArticles(24, limit)
+		if err == nil && len(trendingArticles) > 0 {
+			s.logger.Info("Serving trending news from database", map[string]interface{}{
+				"count": len(trendingArticles),
+			})
+			return trendingArticles, nil
+		}
+	}
+
+	// Fallback to API fetch
 	return s.FetchLatestNews("general", limit)
 }
 
+// GetCategoryMapping returns category mapping for frontend
+func (s *NewsAggregatorService) GetCategoryMapping() (map[int]string, map[string]int, error) {
+	if s.articleRepo == nil {
+		return nil, nil, fmt.Errorf("article repository not available")
+	}
+
+	return s.articleRepo.GetCategoryMapping()
+}
+
 // ===============================
-// QUOTA MANAGEMENT
+// EXISTING METHODS (PRESERVED)
+// ===============================
+
+// All existing methods preserved exactly as they were:
+// - canMakeRequest
+// - recordRequest
+// - categorizeByOrigin
+// - deduplicateArticles
+// - filterArticlesByQuery
+// - getDynamicTTL
+// - FetchAndCacheNews
+// - fetchCategoryNewsSimple
+// - CategoryResult struct
+// - ContentDeduplicator
+// - ContentAnalyzer
+// - Worker pool methods
+// - Close method
+
+// [Previous methods preserved exactly as in original file...]
+
+// Custom errors for news aggregation
+var (
+	ErrNoAPIQuotaAvailable = errors.New("no API quota available for news fetching")
+	ErrAllAPISourcesFailed = errors.New("all API sources failed to fetch news")
+	ErrInvalidCategory     = errors.New("invalid news category")
+	ErrProcessingFailed    = errors.New("news processing failed")
+)
+
+// SetCacheService sets the cache service (called after cache service is created)
+func (s *NewsAggregatorService) SetCacheService(cache *CacheService) {
+	s.cacheService = cache
+}
+
+// ===============================
+// QUOTA MANAGEMENT (PRESERVED)
 // ===============================
 
 // canMakeRequest checks if we can make a request to the given API source
@@ -399,7 +720,7 @@ func (s *NewsAggregatorService) recordRequest(source string) {
 }
 
 // ===============================
-// CONTENT PROCESSING
+// CONTENT PROCESSING (PRESERVED)
 // ===============================
 
 // categorizeByOrigin categorizes articles by origin (Indian vs Global)
@@ -553,6 +874,21 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 		}
 	}
 
+	// Save all articles to database (THE CRITICAL ADDITION)
+	if len(totalArticles) > 0 {
+		err := s.saveArticlesToDatabase(totalArticles)
+		if err != nil {
+			s.logger.Error("Failed to save aggregated articles to database", map[string]interface{}{
+				"error": err.Error(),
+				"count": len(totalArticles),
+			})
+		} else {
+			s.logger.Info("Successfully saved aggregated articles to database", map[string]interface{}{
+				"count": len(totalArticles),
+			})
+		}
+	}
+
 	// Cache aggregated results
 	if len(totalArticles) > 0 && s.cacheService != nil {
 		cacheKey := "news:all:aggregated"
@@ -583,6 +919,7 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 		"duplicates_removed": totalDuplicates,
 		"failed_categories":  len(failedCategories),
 		"duration":           duration,
+		"database_saved":     len(totalArticles),
 	})
 
 	// Return error if too many categories failed
@@ -593,7 +930,7 @@ func (s *NewsAggregatorService) FetchAndCacheNews(ctx context.Context) error {
 	return nil
 }
 
-// fetchCategoryNewsSimple fetches news for a category using simple method
+// fetchCategoryNewsSimple fetches news for a category using database-first method
 func (s *NewsAggregatorService) fetchCategoryNewsSimple(ctx context.Context, category string, istTime time.Time) CategoryResult {
 	result := CategoryResult{
 		Category:  category,
@@ -601,7 +938,7 @@ func (s *NewsAggregatorService) fetchCategoryNewsSimple(ctx context.Context, cat
 		StartTime: time.Now(),
 	}
 
-	// Fetch news using our live method
+	// Use database-first approach
 	articles, err := s.FetchLatestNews(category, 20)
 	if err != nil {
 		result.Error = err
@@ -620,7 +957,7 @@ func (s *NewsAggregatorService) fetchCategoryNewsSimple(ctx context.Context, cat
 }
 
 // ===============================
-// SUPPORTING STRUCTS & HELPER METHODS
+// SUPPORTING STRUCTS & HELPER METHODS (PRESERVED)
 // ===============================
 
 // CategoryResult represents the result of fetching news for a category
@@ -790,7 +1127,7 @@ func (ca *ContentAnalyzer) AnalyzeSentiment(title, description string) float64 {
 }
 
 // ===============================
-// WORKER POOL & UTILITY METHODS
+// WORKER POOL & UTILITY METHODS (PRESERVED)
 // ===============================
 
 // Worker pool management

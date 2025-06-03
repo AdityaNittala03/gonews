@@ -1,10 +1,12 @@
 // internal/handlers/news.go
-// GoNews Phase 2 - Checkpoint 3: News Handlers - API Endpoints for News Aggregation
+// GoNews Phase 2 - Checkpoint 3: News Handlers - FIXED VERSION
 package handlers
 
 import (
 	"context"
 	"fmt"
+
+	//"strconv"
 	"strings"
 	"time"
 
@@ -36,10 +38,140 @@ func NewNewsHandler(newsService *services.NewsAggregatorService, cacheService *s
 }
 
 // ===============================
+// PHASE 1 FIX: Category ID Mapping
+// ===============================
+
+// getCategoryNameFromID converts category ID to category name for API calls
+func getCategoryNameFromID(categoryID string) string {
+	categoryMap := map[string]string{
+		"1":  "general",
+		"2":  "politics",
+		"3":  "business",
+		"4":  "sports",
+		"5":  "technology",
+		"6":  "entertainment",
+		"7":  "health",
+		"8":  "education",
+		"9":  "science",
+		"10": "environment",
+		"11": "defense",
+		"12": "international",
+	}
+
+	if name, exists := categoryMap[categoryID]; exists {
+		return name
+	}
+	return "general" // default fallback
+}
+
+// getCategoryIDFromName converts category name back to ID for database queries
+func getCategoryIDFromName(categoryName string) int {
+	nameMap := map[string]int{
+		"general":       1,
+		"politics":      2,
+		"business":      3,
+		"sports":        4,
+		"technology":    5,
+		"entertainment": 6,
+		"health":        7,
+		"education":     8,
+		"science":       9,
+		"environment":   10,
+		"defense":       11,
+		"international": 12,
+	}
+
+	if id, exists := nameMap[categoryName]; exists {
+		return id
+	}
+	return 1 // default to general
+}
+
+// ===============================
+// PHASE 2: DATABASE HELPER METHODS
+// ===============================
+
+// getArticlesFromDatabase retrieves articles from PostgreSQL database
+func (h *NewsHandler) getArticlesFromDatabase(category string, page, limit int) ([]models.Article, error) {
+	// TODO: This will be implemented once we see the database repository structure
+	// For now, return empty to force API fetch during development
+	h.logger.Info("Database query attempted",
+		"category", category,
+		"page", page,
+		"limit", limit,
+		"status", "not_implemented_yet")
+
+	// In production, this should query:
+	// SELECT * FROM articles
+	// WHERE category_id = $1 AND created_at > NOW() - INTERVAL '24 hours'
+	// ORDER BY created_at DESC, relevance_score DESC
+	// LIMIT $2 OFFSET $3
+
+	return []models.Article{}, fmt.Errorf("database query not implemented yet")
+}
+
+// saveArticlesToDatabase saves articles to PostgreSQL database
+func (h *NewsHandler) saveArticlesToDatabase(articles []models.Article) error {
+	if len(articles) == 0 {
+		return nil
+	}
+
+	// TODO: This will be implemented once we see the database repository structure
+	h.logger.Info("Database save attempted",
+		"articles_count", len(articles),
+		"status", "not_implemented_yet")
+
+	// Log what would be saved for debugging
+	for i, article := range articles {
+		if i >= 3 { // Only log first 3 to avoid spam
+			h.logger.Info("... and %d more articles", len(articles)-3)
+			break
+		}
+		h.logger.Info("Would save article",
+			"title", article.Title,
+			"source", article.Source,
+			"category", article.CategoryID,
+			"is_indian", article.IsIndianContent)
+	}
+
+	// In production, this should:
+	// 1. Check for duplicates by external_id or URL
+	// 2. Insert new articles with proper error handling
+	// 3. Update existing articles if needed
+	// 4. Handle database constraints gracefully
+
+	return nil // Success for now
+}
+
+// searchArticlesInDatabase performs full-text search in database
+func (h *NewsHandler) searchArticlesInDatabase(query string, page, limit int) ([]models.Article, error) {
+	h.logger.Info("Database search attempted",
+		"query", query,
+		"page", page,
+		"limit", limit,
+		"status", "not_implemented_yet")
+
+	// TODO: Implement PostgreSQL full-text search
+	// Use tsvector and tsquery for proper full-text search
+	return []models.Article{}, fmt.Errorf("database search not implemented yet")
+}
+
+// filterIndianContent filters articles for Indian content only
+func (h *NewsHandler) filterIndianContent(articles []models.Article) []models.Article {
+	var indianArticles []models.Article
+	for _, article := range articles {
+		if article.IsIndianContent {
+			indianArticles = append(indianArticles, article)
+		}
+	}
+	return indianArticles
+}
+
+// ===============================
 // MAIN NEWS FEED ENDPOINTS
 // ===============================
 
-// GetNewsFeed returns the main news feed with intelligent caching
+// GetNewsFeed returns the main news feed with database-first architecture
 // GET /api/v1/news
 func (h *NewsHandler) GetNewsFeed(c *fiber.Ctx) error {
 	startTime := time.Now()
@@ -70,21 +202,12 @@ func (h *NewsHandler) GetNewsFeed(c *fiber.Ctx) error {
 		req.Limit = 20
 	}
 
-	// Generate cache key
-	cacheKey := h.generateNewsFeedCacheKey(req)
-
-	// Try to get from cache first
-	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "general")
-	if err != nil {
-		h.logger.Error("Cache retrieval error", "error", err)
-		// Continue without cache
-	}
-
-	var response *models.NewsFeedResponse
-
-	if cacheHit && len(articles) > 0 {
-		// Cache hit - return cached articles
-		response = &models.NewsFeedResponse{
+	// ✅ PHASE 2: Database-first approach
+	// Step 1: Try to get from database first
+	articles, err := h.getArticlesFromDatabase("general", req.Page, req.Limit)
+	if err == nil && len(articles) > 0 {
+		// Success! Return from database
+		response := &models.NewsFeedResponse{
 			Articles: articles,
 			Pagination: models.PaginationResponse{
 				Page:       req.Page,
@@ -96,55 +219,1095 @@ func (h *NewsHandler) GetNewsFeed(c *fiber.Ctx) error {
 			},
 		}
 
-		h.logger.Info("News feed served from cache",
-			"cache_key", cacheKey,
+		h.logger.Info("News feed served from database",
 			"articles_count", len(articles),
 			"page", req.Page,
 			"duration", time.Since(startTime),
 		)
-	} else {
-		// Cache miss - fetch fresh content
-		h.logger.Info("Cache miss - fetching fresh news feed")
 
-		// FIXED: Call live API method directly
-		freshArticles, err := h.newsService.FetchLatestNews("general", req.Limit)
-		if err != nil {
-			h.logger.Error("Failed to fetch fresh news", "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-				Message: "Unable to retrieve fresh news content",
-			})
-		}
+		return c.JSON(response)
+	}
 
-		// Convert to []models.Article for response
-		articles = []models.Article{}
-		for _, article := range freshArticles {
-			articles = append(articles, *article)
-		}
+	// Step 2: Database empty/stale - fetch from APIs
+	h.logger.Info("Database empty/stale - fetching fresh news feed")
 
-		// Cache the fresh results
-		if len(articles) > 0 {
-			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "general"); err != nil {
-				h.logger.Error("Failed to cache news feed", "error", err)
-			}
-		}
+	freshArticles, err := h.newsService.FetchLatestNews("general", req.Limit)
+	if err != nil {
+		h.logger.Error("Failed to fetch fresh news", "error", err)
 
-		response = &models.NewsFeedResponse{
-			Articles: articles,
+		// ✅ GRACEFUL FALLBACK: Return empty results instead of 500
+		return c.JSON(&models.NewsFeedResponse{
+			Articles: []models.Article{},
 			Pagination: models.PaginationResponse{
-				Page:       req.Page,
-				Limit:      req.Limit,
-				Total:      len(articles),
-				TotalPages: 1,
-				HasNext:    false,
-				HasPrev:    false,
+				Page: req.Page, Limit: req.Limit, Total: 0, TotalPages: 0,
+				HasNext: false, HasPrev: false,
 			},
+		})
+	}
+
+	// Convert to []models.Article
+	articles = []models.Article{}
+	for _, article := range freshArticles {
+		articles = append(articles, *article)
+	}
+
+	// ✅ PHASE 2: Save fresh articles to database
+	if len(articles) > 0 {
+		if err := h.saveArticlesToDatabase(articles); err != nil {
+			h.logger.Error("Failed to save articles to database", "error", err)
 		}
+	}
+
+	// Cache the fresh results
+	cacheKey := h.generateNewsFeedCacheKey(req)
+	if len(articles) > 0 {
+		if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "general"); err != nil {
+			h.logger.Error("Failed to cache news feed", "error", err)
+		}
+	}
+
+	response := &models.NewsFeedResponse{
+		Articles: articles,
+		Pagination: models.PaginationResponse{
+			Page:       req.Page,
+			Limit:      req.Limit,
+			Total:      len(articles),
+			TotalPages: 1,
+			HasNext:    false,
+			HasPrev:    false,
+		},
 	}
 
 	duration := time.Since(startTime)
 	h.logger.Info("News feed request completed",
 		"articles_count", len(response.Articles),
 		"page", req.Page,
+		"source", "fresh_api",
+		"duration", duration,
+	)
+
+	return c.JSON(response)
+}
+
+// GetCategoryNews returns news for a specific category with fixes
+// GET /api/v1/news/category/:category
+func (h *NewsHandler) GetCategoryNews(c *fiber.Ctx) error {
+	startTime := time.Now()
+	categoryID := c.Params("category")
+
+	if categoryID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Please specify a valid news category",
+		})
+	}
+
+	// ✅ PHASE 1 FIX: Convert category ID to name
+	categoryName := getCategoryNameFromID(categoryID)
+
+	h.logger.Info("Category request",
+		"category_id", categoryID,
+		"category_name", categoryName)
+
+	// Parse query parameters
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	onlyIndian := c.QueryBool("only_indian", false)
+
+	// Validate parameters
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	// ✅ PHASE 2: Database-first approach
+	// Step 1: Try to get from database first
+	articles, err := h.getArticlesFromDatabase(categoryName, page, limit)
+	if err == nil && len(articles) > 0 {
+		// Success! Return from database
+		h.logger.Info("Category news served from database",
+			"category", categoryName,
+			"articles_count", len(articles),
+			"page", page,
+			"duration", time.Since(startTime),
+		)
+
+		// Apply Indian filter if requested
+		if onlyIndian {
+			articles = h.filterIndianContent(articles)
+		}
+
+		return h.buildCategoryResponse(c, articles, page, limit, len(articles))
+	}
+
+	// Step 2: Database empty/stale - fetch from APIs
+	h.logger.Info("Database empty for category - fetching fresh news", "category", categoryName)
+
+	// ✅ PHASE 1 FIX: Use categoryName instead of categoryID
+	freshArticles, err := h.newsService.FetchNewsByCategory(categoryName, limit*2)
+	if err != nil {
+		h.logger.Error("Failed to fetch category news", "category", categoryName, "error", err)
+
+		// ✅ GRACEFUL FALLBACK: Return empty results instead of 500
+		return c.JSON(&models.NewsFeedResponse{
+			Articles: []models.Article{},
+			Pagination: models.PaginationResponse{
+				Page: page, Limit: limit, Total: 0, TotalPages: 0,
+				HasNext: false, HasPrev: false,
+			},
+		})
+	}
+
+	// Convert []*models.Article to []models.Article
+	articles = []models.Article{}
+	for _, article := range freshArticles {
+		articles = append(articles, *article)
+	}
+
+	// ✅ PHASE 2: Save fresh articles to database
+	if len(articles) > 0 {
+		if err := h.saveArticlesToDatabase(articles); err != nil {
+			h.logger.Error("Failed to save category articles to database", "category", categoryName, "error", err)
+		}
+	}
+
+	// Cache the fresh results
+	cacheKey := fmt.Sprintf("gonews:category:%s:page:%d:limit:%d:indian:%t",
+		categoryName, page, limit, onlyIndian)
+	if len(articles) > 0 {
+		if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, categoryName); err != nil {
+			h.logger.Error("Failed to cache category news", "category", categoryName, "error", err)
+		}
+	}
+
+	// Apply Indian filter if requested
+	if onlyIndian {
+		articles = h.filterIndianContent(articles)
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Category news request completed",
+		"category_id", categoryID,
+		"category_name", categoryName,
+		"articles_count", len(articles),
+		"page", page,
+		"only_indian", onlyIndian,
+		"source", "fresh_api",
+		"duration", duration,
+	)
+
+	return h.buildCategoryResponse(c, articles, page, limit, len(articles))
+}
+
+// buildCategoryResponse builds the category response with pagination
+func (h *NewsHandler) buildCategoryResponse(c *fiber.Ctx, articles []models.Article, page, limit, totalArticles int) error {
+	// Implement pagination
+	startIdx := (page - 1) * limit
+	endIdx := startIdx + limit
+
+	if startIdx >= totalArticles {
+		articles = []models.Article{}
+	} else {
+		if endIdx > totalArticles {
+			endIdx = totalArticles
+		}
+		articles = articles[startIdx:endIdx]
+	}
+
+	response := &models.NewsFeedResponse{
+		Articles: articles,
+		Pagination: models.PaginationResponse{
+			Page:       page,
+			Limit:      limit,
+			Total:      totalArticles,
+			TotalPages: (totalArticles + limit - 1) / limit,
+			HasNext:    page < (totalArticles+limit-1)/limit,
+			HasPrev:    page > 1,
+		},
+	}
+
+	return c.JSON(response)
+}
+
+// ===============================
+// NEWS SEARCH ENDPOINTS
+// ===============================
+
+// SearchNews searches for news articles with database-first approach
+// GET /api/v1/news/search
+func (h *NewsHandler) SearchNews(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// Parse search request
+	req := &models.NewsSearchRequest{
+		Page:  1,
+		Limit: 20,
+	}
+
+	if err := c.QueryParser(req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid search parameters: " + err.Error(),
+		})
+	}
+
+	// Validate search query
+	if req.Query == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Please provide a search query",
+		})
+	}
+
+	// Validate pagination
+	if req.Page < 1 {
+		req.Page = 1
+	}
+	if req.Limit < 1 || req.Limit > 50 {
+		req.Limit = 20
+	}
+
+	// ✅ PHASE 2: Try database search first
+	articles, err := h.searchArticlesInDatabase(req.Query, req.Page, req.Limit)
+	if err == nil && len(articles) > 0 {
+		h.logger.Info("Search results served from database",
+			"query", req.Query,
+			"results_count", len(articles),
+			"duration", time.Since(startTime),
+		)
+
+		return h.buildSearchResponse(c, articles, req)
+	}
+
+	// Fallback to cache-based search
+	cacheKey := fmt.Sprintf("gonews:search:%s:page:%d:limit:%d",
+		strings.ToLower(req.Query), req.Page, req.Limit)
+
+	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "search")
+	if err != nil {
+		h.logger.Error("Search cache retrieval error", "query", req.Query, "error", err)
+	}
+
+	if !cacheHit || len(articles) == 0 {
+		// Cache miss - perform fresh search in cached content
+		generalCacheKey := "gonews:category:general"
+		allArticles, _, err := h.cacheService.GetArticles(c.Context(), generalCacheKey, "general")
+		if err != nil {
+			h.logger.Error("Failed to get articles for search", "error", err)
+			// ✅ GRACEFUL FALLBACK: Return empty results instead of 500
+			allArticles = []models.Article{}
+		}
+
+		// Simple search implementation
+		articles = h.performSimpleSearch(allArticles, req.Query, req.OnlyIndian)
+
+		// Cache search results
+		if len(articles) > 0 {
+			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "search"); err != nil {
+				h.logger.Error("Failed to cache search results", "query", req.Query, "error", err)
+			}
+		}
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("News search completed",
+		"query", req.Query,
+		"results_count", len(articles),
+		"page", req.Page,
+		"cache_hit", cacheHit,
+		"duration", duration,
+	)
+
+	return h.buildSearchResponse(c, articles, req)
+}
+
+// buildSearchResponse builds the search response with pagination
+func (h *NewsHandler) buildSearchResponse(c *fiber.Ctx, articles []models.Article, req *models.NewsSearchRequest) error {
+	// Implement pagination
+	totalResults := len(articles)
+	startIdx := (req.Page - 1) * req.Limit
+	endIdx := startIdx + req.Limit
+
+	if startIdx >= totalResults {
+		articles = []models.Article{}
+	} else {
+		if endIdx > totalResults {
+			endIdx = totalResults
+		}
+		articles = articles[startIdx:endIdx]
+	}
+
+	response := &models.NewsSearchResponse{
+		Articles: articles,
+		Pagination: models.PaginationResponse{
+			Page:       req.Page,
+			Limit:      req.Limit,
+			Total:      totalResults,
+			TotalPages: (totalResults + req.Limit - 1) / req.Limit,
+			HasNext:    req.Page < (totalResults+req.Limit-1)/req.Limit,
+			HasPrev:    req.Page > 1,
+		},
+		Query:      req.Query,
+		TotalFound: totalResults,
+	}
+
+	return c.JSON(response)
+}
+
+// performSimpleSearch performs basic search functionality
+func (h *NewsHandler) performSimpleSearch(articles []models.Article, query string, onlyIndian *bool) []models.Article {
+	var results []models.Article
+	queryLower := strings.ToLower(query)
+
+	for _, article := range articles {
+		// Simple text matching in title and description
+		titleMatch := strings.Contains(strings.ToLower(article.Title), queryLower)
+		descMatch := false
+		if article.Description != nil {
+			descMatch = strings.Contains(strings.ToLower(*article.Description), queryLower)
+		}
+
+		if titleMatch || descMatch {
+			// Filter for Indian content if requested
+			if onlyIndian != nil && *onlyIndian && !article.IsIndianContent {
+				continue
+			}
+			results = append(results, article)
+		}
+	}
+
+	return results
+}
+
+// ===============================
+// TRENDING & FEATURED ENDPOINTS
+// ===============================
+
+// GetTrendingNews returns trending news articles
+// GET /api/v1/news/trending
+func (h *NewsHandler) GetTrendingNews(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	limit := c.QueryInt("limit", 10)
+	onlyIndian := c.QueryBool("only_indian", true) // Default to Indian trending
+
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+
+	cacheKey := fmt.Sprintf("gonews:trending:limit:%d:indian:%t", limit, onlyIndian)
+
+	// Try cache first
+	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "trending")
+	if err != nil {
+		h.logger.Error("Trending cache retrieval error", "error", err)
+	}
+
+	if !cacheHit || len(articles) == 0 {
+		// Cache miss - get fresh trending content
+		h.logger.Info("Fetching fresh trending news")
+
+		// Get articles from multiple high-priority categories
+		trendingCategories := []string{"breaking", "politics", "sports", "business"}
+		var allArticles []models.Article
+
+		for _, category := range trendingCategories {
+			categoryKey := fmt.Sprintf("gonews:category:%s", category)
+			categoryArticles, _, err := h.cacheService.GetArticles(c.Context(), categoryKey, category)
+			if err == nil && len(categoryArticles) > 0 {
+				// Take top articles from each category
+				topCount := 5
+				if len(categoryArticles) < topCount {
+					topCount = len(categoryArticles)
+				}
+				allArticles = append(allArticles, categoryArticles[:topCount]...)
+			}
+		}
+
+		// If no cached content, fetch fresh trending content
+		if len(allArticles) == 0 {
+			freshArticles, err := h.newsService.FetchLatestNews("general", limit*3)
+			if err != nil {
+				h.logger.Error("Failed to fetch fresh trending news", "error", err)
+				// ✅ GRACEFUL FALLBACK: Return empty results
+				allArticles = []models.Article{}
+			} else {
+				for _, article := range freshArticles {
+					allArticles = append(allArticles, *article)
+				}
+			}
+		}
+
+		// Filter for trending articles
+		articles = h.filterTrendingArticles(allArticles, onlyIndian, limit)
+
+		// Cache trending results
+		if len(articles) > 0 {
+			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "trending"); err != nil {
+				h.logger.Error("Failed to cache trending news", "error", err)
+			}
+		}
+	}
+
+	// Ensure we don't exceed the requested limit
+	if len(articles) > limit {
+		articles = articles[:limit]
+	}
+
+	response := &models.NewsFeedResponse{
+		Articles: articles,
+		Pagination: models.PaginationResponse{
+			Page:       1,
+			Limit:      limit,
+			Total:      len(articles),
+			TotalPages: 1,
+			HasNext:    false,
+			HasPrev:    false,
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Trending news request completed",
+		"articles_count", len(articles),
+		"limit", limit,
+		"only_indian", onlyIndian,
+		"cache_hit", cacheHit,
+		"duration", duration,
+	)
+
+	return c.JSON(response)
+}
+
+// filterTrendingArticles filters articles for trending content
+func (h *NewsHandler) filterTrendingArticles(articles []models.Article, onlyIndian bool, limit int) []models.Article {
+	var trending []models.Article
+
+	for _, article := range articles {
+		// Filter for Indian content if requested
+		if onlyIndian && !article.IsIndianContent {
+			continue
+		}
+
+		// Simple trending criteria: recent + high view count or featured
+		isRecent := time.Since(article.PublishedAt) < 24*time.Hour
+		isTrending := isRecent && (article.ViewCount > 100 || article.IsFeatured)
+
+		if isTrending {
+			trending = append(trending, article)
+		}
+
+		// Stop if we have enough trending articles
+		if len(trending) >= limit*2 { // Get extra for better selection
+			break
+		}
+	}
+
+	// Sort by view count descending
+	for i := 0; i < len(trending)-1; i++ {
+		for j := i + 1; j < len(trending); j++ {
+			if trending[i].ViewCount < trending[j].ViewCount {
+				trending[i], trending[j] = trending[j], trending[i]
+			}
+		}
+	}
+
+	// Return top trending articles
+	if len(trending) > limit {
+		trending = trending[:limit]
+	}
+
+	return trending
+}
+
+// ===============================
+// ADMIN & MANAGEMENT ENDPOINTS
+// ===============================
+
+// RefreshNews manually triggers news refresh
+// POST /api/v1/news/refresh
+func (h *NewsHandler) RefreshNews(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// Check if user has admin privileges
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Message: "Please log in to refresh news",
+		})
+	}
+
+	h.logger.Info("Manual news refresh triggered", "user_id", userID)
+
+	// Trigger comprehensive news aggregation
+	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
+	defer cancel()
+
+	if err := h.newsService.FetchAndCacheNews(ctx); err != nil {
+		h.logger.Error("Manual news refresh failed", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Message: "News refresh failed: " + err.Error(),
+		})
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Manual news refresh completed", "duration", duration)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "News refresh completed successfully",
+		Data: map[string]interface{}{
+			"duration_seconds": duration.Seconds(),
+			"timestamp":        time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// GetNewsStats returns news aggregation statistics
+// GET /api/v1/news/stats
+func (h *NewsHandler) GetNewsStats(c *fiber.Ctx) error {
+	// Get cache statistics
+	cacheStats := h.cacheService.GetCacheStats()
+	cacheHealth := h.cacheService.GetCacheHealth()
+
+	// Combine statistics
+	stats := map[string]interface{}{
+		"cache": map[string]interface{}{
+			"total_requests": cacheStats.TotalRequests,
+			"cache_hits":     cacheStats.CacheHits,
+			"cache_misses":   cacheStats.CacheMisses,
+			"hit_rate":       cacheStats.HitRate,
+			"category_stats": cacheStats.CategoryStats,
+			"peak_hour_hits": cacheStats.PeakHourHits,
+			"off_peak_hits":  cacheStats.OffPeakHits,
+		},
+		"health":            cacheHealth,
+		"api_quotas":        h.config.GetAPISourceConfigs(),
+		"total_daily_quota": h.config.GetTotalDailyQuota(),
+		"timestamp":         time.Now().Format(time.RFC3339),
+	}
+
+	return c.JSON(models.SuccessResponse{
+		Message: "News statistics retrieved successfully",
+		Data:    stats,
+	})
+}
+
+// ===============================
+// CATEGORIES ENDPOINT
+// ===============================
+
+// GetCategories returns all available news categories
+// GET /api/v1/news/categories
+func (h *NewsHandler) GetCategories(c *fiber.Ctx) error {
+	// Static categories (in production, fetch from database)
+	categories := []models.Category{
+		{ID: 1, Name: "Top Stories", Slug: "top-stories", Description: strPtr("Breaking news and top headlines from India"), ColorCode: "#FF6B35", Icon: strPtr("🔥"), IsActive: true, SortOrder: 1},
+		{ID: 2, Name: "Politics", Slug: "politics", Description: strPtr("Indian politics, government, and policy news"), ColorCode: "#DC3545", Icon: strPtr("🏛️"), IsActive: true, SortOrder: 2},
+		{ID: 3, Name: "Business", Slug: "business", Description: strPtr("Indian markets, economy, and business news"), ColorCode: "#28A745", Icon: strPtr("💼"), IsActive: true, SortOrder: 3},
+		{ID: 4, Name: "Sports", Slug: "sports", Description: strPtr("Cricket, IPL, Olympics, and Indian sports"), ColorCode: "#007BFF", Icon: strPtr("🏏"), IsActive: true, SortOrder: 4},
+		{ID: 5, Name: "Technology", Slug: "technology", Description: strPtr("Tech innovation, startups, and digital India"), ColorCode: "#6F42C1", Icon: strPtr("💻"), IsActive: true, SortOrder: 5},
+		{ID: 6, Name: "Entertainment", Slug: "entertainment", Description: strPtr("Bollywood, regional cinema, and celebrity news"), ColorCode: "#FD7E14", Icon: strPtr("🎬"), IsActive: true, SortOrder: 6},
+		{ID: 7, Name: "Health", Slug: "health", Description: strPtr("Healthcare, medical research, and wellness"), ColorCode: "#20C997", Icon: strPtr("🏥"), IsActive: true, SortOrder: 7},
+		{ID: 8, Name: "International", Slug: "international", Description: strPtr("World news relevant to India"), ColorCode: "#868E96", Icon: strPtr("🌍"), IsActive: true, SortOrder: 12},
+	}
+
+	response := &models.CategoryResponse{
+		Categories: categories,
+	}
+
+	return c.JSON(response)
+}
+
+// ===============================
+// BOOKMARK MANAGEMENT ENDPOINTS
+// ===============================
+
+// GetUserBookmarks returns user's bookmarked articles
+// GET /api/v1/news/bookmarks
+func (h *NewsHandler) GetUserBookmarks(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		// If not authenticated, return demo bookmarks
+		return h.GetDemoBookmarks(c)
+	}
+
+	// Parse query parameters
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	category := c.Query("category", "")
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+
+	// TODO: Implement actual database query for user bookmarks
+	// For now, return mock data structure
+	bookmarks := []models.Article{} // This should come from database
+
+	response := &models.NewsFeedResponse{
+		Articles: bookmarks,
+		Pagination: models.PaginationResponse{
+			Page:       page,
+			Limit:      limit,
+			Total:      len(bookmarks),
+			TotalPages: (len(bookmarks) + limit - 1) / limit,
+			HasNext:    false,
+			HasPrev:    page > 1,
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("User bookmarks retrieved",
+		"user_id", userID.String(),
+		"bookmarks_count", len(bookmarks),
+		"category", category,
+		"duration", duration,
+	)
+
+	return c.JSON(response)
+}
+
+// GetDemoBookmarks returns demo bookmarks for unauthenticated users
+// GET /api/v1/news/bookmarks (without auth)
+func (h *NewsHandler) GetDemoBookmarks(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// Return some demo Indian news articles as bookmarks
+	demoBookmarks := []models.Article{
+		{
+			ID:              1001,
+			Title:           "India's Digital Revolution: UPI Transactions Cross 10 Billion",
+			Description:     strPtr("India's Unified Payments Interface (UPI) has revolutionized digital payments across the country"),
+			URL:             "https://example.com/upi-revolution",
+			ImageURL:        strPtr("https://example.com/images/upi.jpg"),
+			Source:          "Economic Times",
+			Author:          strPtr("Tech Reporter"),
+			CategoryID:      intPtr(3),
+			PublishedAt:     time.Now().Add(-2 * time.Hour),
+			IsIndianContent: true,
+			IsFeatured:      true,
+			ViewCount:       1250,
+		},
+		{
+			ID:              1002,
+			Title:           "IPL 2024: Mumbai Indians vs Chennai Super Kings - Match Preview",
+			Description:     strPtr("The much-awaited clash between two cricket giants in IPL 2024"),
+			URL:             "https://example.com/ipl-match",
+			ImageURL:        strPtr("https://example.com/images/ipl.jpg"),
+			Source:          "Cricinfo",
+			Author:          strPtr("Cricket Correspondent"),
+			CategoryID:      intPtr(4),
+			PublishedAt:     time.Now().Add(-1 * time.Hour),
+			IsIndianContent: true,
+			IsFeatured:      true,
+			ViewCount:       2100,
+		},
+	}
+
+	response := &models.NewsFeedResponse{
+		Articles: demoBookmarks,
+		Pagination: models.PaginationResponse{
+			Page:       1,
+			Limit:      20,
+			Total:      len(demoBookmarks),
+			TotalPages: 1,
+			HasNext:    false,
+			HasPrev:    false,
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Demo bookmarks served",
+		"articles_count", len(demoBookmarks),
+		"duration", duration,
+	)
+
+	return c.JSON(response)
+}
+
+// AddBookmark adds an article to user's bookmarks
+// POST /api/v1/news/bookmarks
+func (h *NewsHandler) AddBookmark(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Message: "User authentication required to add bookmarks",
+		})
+	}
+
+	var req struct {
+		ArticleID string `json:"article_id" validate:"required"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid request body",
+		})
+	}
+
+	if req.ArticleID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Article ID is required",
+		})
+	}
+
+	// TODO: Implement actual database insertion for bookmark
+	// For now, return success response
+
+	duration := time.Since(startTime)
+	h.logger.Info("Bookmark added",
+		"user_id", userID.String(),
+		"article_id", req.ArticleID,
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Article bookmarked successfully",
+		Data: map[string]interface{}{
+			"article_id":    req.ArticleID,
+			"bookmarked_at": time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// RemoveBookmark removes an article from user's bookmarks
+// DELETE /api/v1/news/bookmarks/:id
+func (h *NewsHandler) RemoveBookmark(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Message: "User authentication required to remove bookmarks",
+		})
+	}
+
+	articleID := c.Params("id")
+	if articleID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Article ID is required",
+		})
+	}
+
+	// TODO: Implement actual database deletion for bookmark
+
+	duration := time.Since(startTime)
+	h.logger.Info("Bookmark removed",
+		"user_id", userID.String(),
+		"article_id", articleID,
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Bookmark removed successfully",
+		Data: map[string]interface{}{
+			"article_id": articleID,
+			"removed_at": time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// ===============================
+// READING HISTORY ENDPOINTS
+// ===============================
+
+// GetReadingHistory returns user's reading history
+// GET /api/v1/news/history
+func (h *NewsHandler) GetReadingHistory(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Message: "User authentication required for reading history",
+		})
+	}
+
+	// Parse query parameters
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	days := c.QueryInt("days", 30) // Last 30 days by default
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	if days < 1 || days > 365 {
+		days = 30
+	}
+
+	// TODO: Implement actual database query for reading history
+	history := []models.Article{} // This should come from database
+
+	response := &models.NewsFeedResponse{
+		Articles: history,
+		Pagination: models.PaginationResponse{
+			Page:       page,
+			Limit:      limit,
+			Total:      len(history),
+			TotalPages: (len(history) + limit - 1) / limit,
+			HasNext:    false,
+			HasPrev:    page > 1,
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Reading history retrieved",
+		"user_id", userID.String(),
+		"history_count", len(history),
+		"days", days,
+		"duration", duration,
+	)
+
+	return c.JSON(response)
+}
+
+// TrackArticleRead tracks when a user reads an article
+// POST /api/v1/news/read
+func (h *NewsHandler) TrackArticleRead(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	var req struct {
+		ArticleID   string `json:"article_id" validate:"required"`
+		ReadTime    int    `json:"read_time,omitempty"`    // seconds spent reading
+		ScrollDepth int    `json:"scroll_depth,omitempty"` // percentage scrolled
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Invalid request body",
+		})
+	}
+
+	if req.ArticleID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Message: "Article ID is required",
+		})
+	}
+
+	// Check if user is authenticated (optional for this endpoint)
+	userID, isAuth := middleware.GetUserIDFromContext(c)
+
+	// TODO: Implement actual database insertion for reading history
+	// For authenticated users: store in user-specific reading history
+	// For anonymous users: could store in analytics for trending calculation
+
+	var logMessage string
+	var userData map[string]interface{}
+
+	if isAuth {
+		logMessage = "Article read tracked for user"
+		userData = map[string]interface{}{
+			"user_id":       userID.String(),
+			"authenticated": true,
+		}
+	} else {
+		logMessage = "Article read tracked anonymously"
+		userData = map[string]interface{}{
+			"ip_address":    c.IP(),
+			"authenticated": false,
+		}
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info(logMessage,
+		"article_id", req.ArticleID,
+		"read_time", req.ReadTime,
+		"scroll_depth", req.ScrollDepth,
+		"duration", duration,
+	)
+
+	return c.JSON(models.SuccessResponse{
+		Message: "Reading activity tracked successfully",
+		Data: map[string]interface{}{
+			"article_id": req.ArticleID,
+			"tracked_at": time.Now().Format(time.RFC3339),
+			"user_data":  userData,
+		},
+	})
+}
+
+// ===============================
+// PERSONALIZED FEED ENDPOINTS
+// ===============================
+
+// GetPersonalizedFeed returns personalized news feed for authenticated users
+// GET /api/v1/news/personalized
+func (h *NewsHandler) GetPersonalizedFeed(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
+		// If not authenticated, return India-focused feed
+		return h.GetIndiaFocusedFeed(c)
+	}
+
+	// Parse query parameters
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+
+	// TODO: Implement personalization algorithm based on:
+	// - User's reading history
+	// - Bookmarked categories
+	// - Time preferences
+	// - Location-based content
+
+	// For now, return India-focused content with some personalization hints
+	cacheKey := fmt.Sprintf("gonews:personalized:%s:page:%d:limit:%d", userID.String(), page, limit)
+
+	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "personalized")
+	if err != nil || !cacheHit {
+		// Fallback to general Indian content
+		articles, _, _ = h.cacheService.GetArticles(c.Context(), "gonews:category:general", "general")
+
+		// If no cached content, fetch fresh personalized content
+		if len(articles) == 0 {
+			freshArticles, err := h.newsService.FetchLatestNews("general", limit)
+			if err == nil {
+				for _, article := range freshArticles {
+					articles = append(articles, *article)
+				}
+			}
+		}
+
+		// Cache personalized results
+		if len(articles) > 0 {
+			h.cacheService.SetArticles(c.Context(), cacheKey, articles, "personalized")
+		}
+	}
+
+	// Apply basic personalization (prioritize Indian content)
+	var personalizedArticles []models.Article
+	for _, article := range articles {
+		if article.IsIndianContent {
+			personalizedArticles = append(personalizedArticles, article)
+		}
+	}
+
+	// Limit results
+	if len(personalizedArticles) > limit {
+		personalizedArticles = personalizedArticles[:limit]
+	}
+
+	response := &models.NewsFeedResponse{
+		Articles: personalizedArticles,
+		Pagination: models.PaginationResponse{
+			Page:       page,
+			Limit:      limit,
+			Total:      len(personalizedArticles),
+			TotalPages: (len(personalizedArticles) + limit - 1) / limit,
+			HasNext:    false,
+			HasPrev:    page > 1,
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("Personalized feed served",
+		"user_id", userID.String(),
+		"articles_count", len(personalizedArticles),
+		"cache_hit", cacheHit,
+		"duration", duration,
+	)
+
+	return c.JSON(response)
+}
+
+// GetIndiaFocusedFeed returns India-focused feed for unauthenticated users
+// GET /api/v1/news/personalized (without auth)
+func (h *NewsHandler) GetIndiaFocusedFeed(c *fiber.Ctx) error {
+	startTime := time.Now()
+
+	// Parse query parameters
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+
+	// Get Indian-focused content from cache
+	cacheKey := fmt.Sprintf("gonews:india-focused:page:%d:limit:%d", page, limit)
+
+	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "india")
+	if err != nil || !cacheHit {
+		// Get from multiple Indian categories
+		categories := []string{"politics", "business", "sports"}
+		var allArticles []models.Article
+
+		for _, category := range categories {
+			categoryKey := fmt.Sprintf("gonews:category:%s", category)
+			categoryArticles, _, err := h.cacheService.GetArticles(c.Context(), categoryKey, category)
+			if err == nil {
+				// Take top articles from each category
+				topCount := 5
+				if len(categoryArticles) < topCount {
+					topCount = len(categoryArticles)
+				}
+				for _, article := range categoryArticles[:topCount] {
+					if article.IsIndianContent {
+						allArticles = append(allArticles, article)
+					}
+				}
+			}
+		}
+
+		// If no cached content, fetch fresh India-focused content
+		if len(allArticles) == 0 {
+			freshArticles, err := h.newsService.FetchLatestNews("general", limit*2)
+			if err == nil {
+				for _, article := range freshArticles {
+					if article.IsIndianContent {
+						allArticles = append(allArticles, *article)
+					}
+				}
+			}
+		}
+
+		articles = allArticles
+
+		// Cache the India-focused results
+		if len(articles) > 0 {
+			h.cacheService.SetArticles(c.Context(), cacheKey, articles, "india")
+		}
+	}
+
+	// Limit results
+	if len(articles) > limit {
+		articles = articles[:limit]
+	}
+
+	response := &models.NewsFeedResponse{
+		Articles: articles,
+		Pagination: models.PaginationResponse{
+			Page:       page,
+			Limit:      limit,
+			Total:      len(articles),
+			TotalPages: (len(articles) + limit - 1) / limit,
+			HasNext:    false,
+			HasPrev:    page > 1,
+		},
+	}
+
+	duration := time.Since(startTime)
+	h.logger.Info("India-focused feed served",
+		"articles_count", len(articles),
 		"cache_hit", cacheHit,
 		"duration", duration,
 	)
@@ -219,35 +1382,42 @@ func (h *NewsHandler) GetDetailedStats(c *fiber.Ctx) error {
 // POST /api/v1/news/admin/refresh-category/:category
 func (h *NewsHandler) RefreshCategory(c *fiber.Ctx) error {
 	startTime := time.Now()
-	category := c.Params("category")
+	categoryID := c.Params("category")
 
-	if category == "" {
+	if categoryID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
 			Message: "Category parameter is required",
 		})
 	}
 
-	h.logger.Info("Manual category refresh triggered", "category", category)
+	// ✅ PHASE 1 FIX: Convert category ID to name
+	categoryName := getCategoryNameFromID(categoryID)
+
+	h.logger.Info("Manual category refresh triggered",
+		"category_id", categoryID,
+		"category_name", categoryName)
 
 	// Trigger category-specific news aggregation
 	_, cancel := context.WithTimeout(c.Context(), 30*time.Second)
 	defer cancel()
 
-	// FIXED: Use FetchNewsByCategory instead of FetchCategoryNews
-	_, err := h.newsService.FetchNewsByCategory(category, 50)
+	// ✅ FIXED: Use categoryName instead of categoryID
+	_, err := h.newsService.FetchNewsByCategory(categoryName, 50)
 	if err != nil {
-		h.logger.Error("Category refresh failed", "category", category, "error", err)
+		h.logger.Error("Category refresh failed", "category", categoryName, "error", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Message: fmt.Sprintf("Failed to refresh category '%s': %s", category, err.Error()),
+			Message: fmt.Sprintf("Failed to refresh category '%s': %s", categoryName, err.Error()),
 		})
 	}
+
 	duration := time.Since(startTime)
-	h.logger.Info("Category refresh completed", "category", category, "duration", duration)
+	h.logger.Info("Category refresh completed", "category", categoryName, "duration", duration)
 
 	return c.JSON(models.SuccessResponse{
-		Message: fmt.Sprintf("Category '%s' refreshed successfully", category),
+		Message: fmt.Sprintf("Category '%s' refreshed successfully", categoryName),
 		Data: map[string]interface{}{
-			"category":         category,
+			"category_id":      categoryID,
+			"category_name":    categoryName,
 			"duration_seconds": duration.Seconds(),
 			"timestamp":        time.Now().Format(time.RFC3339),
 		},
@@ -737,72 +1907,6 @@ func (h *NewsHandler) generateNewsFeedCacheKey(req *models.NewsFeedRequest) stri
 	return key
 }
 
-// performSimpleSearch performs basic search functionality
-func (h *NewsHandler) performSimpleSearch(articles []models.Article, query string, onlyIndian *bool) []models.Article {
-	var results []models.Article
-	queryLower := strings.ToLower(query)
-
-	for _, article := range articles {
-		// Simple text matching in title and description
-		titleMatch := strings.Contains(strings.ToLower(article.Title), queryLower)
-		descMatch := false
-		if article.Description != nil {
-			descMatch = strings.Contains(strings.ToLower(*article.Description), queryLower)
-		}
-
-		if titleMatch || descMatch {
-			// Filter for Indian content if requested
-			if onlyIndian != nil && *onlyIndian && !article.IsIndianContent {
-				continue
-			}
-			results = append(results, article)
-		}
-	}
-
-	return results
-}
-
-// filterTrendingArticles filters articles for trending content
-func (h *NewsHandler) filterTrendingArticles(articles []models.Article, onlyIndian bool, limit int) []models.Article {
-	var trending []models.Article
-
-	for _, article := range articles {
-		// Filter for Indian content if requested
-		if onlyIndian && !article.IsIndianContent {
-			continue
-		}
-
-		// Simple trending criteria: recent + high view count or featured
-		isRecent := time.Since(article.PublishedAt) < 24*time.Hour
-		isTrending := isRecent && (article.ViewCount > 100 || article.IsFeatured)
-
-		if isTrending {
-			trending = append(trending, article)
-		}
-
-		// Stop if we have enough trending articles
-		if len(trending) >= limit*2 { // Get extra for better selection
-			break
-		}
-	}
-
-	// Sort by view count descending
-	for i := 0; i < len(trending)-1; i++ {
-		for j := i + 1; j < len(trending); j++ {
-			if trending[i].ViewCount < trending[j].ViewCount {
-				trending[i], trending[j] = trending[j], trending[i]
-			}
-		}
-	}
-
-	// Return top trending articles
-	if len(trending) > limit {
-		trending = trending[:limit]
-	}
-
-	return trending
-}
-
 // Helper function to create string pointer
 func strPtr(s string) *string {
 	return &s
@@ -811,927 +1915,4 @@ func strPtr(s string) *string {
 // Helper function to create int pointer
 func intPtr(i int) *int {
 	return &i
-}
-
-// GetCategoryNews returns news for a specific category
-// GET /api/v1/news/category/:category
-func (h *NewsHandler) GetCategoryNews(c *fiber.Ctx) error {
-	startTime := time.Now()
-	category := c.Params("category")
-
-	if category == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Please specify a valid news category",
-		})
-	}
-
-	// Parse query parameters
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-	onlyIndian := c.QueryBool("only_indian", false)
-
-	// Validate parameters
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
-
-	// Generate cache key
-	cacheKey := fmt.Sprintf("gonews:category:%s:page:%d:limit:%d:indian:%t",
-		category, page, limit, onlyIndian)
-
-	// Try cache first
-	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, category)
-	if err != nil {
-		h.logger.Error("Cache retrieval error for category", "category", category, "error", err)
-	}
-
-	if !cacheHit || len(articles) == 0 {
-		// Cache miss - fetch fresh category content
-		h.logger.Info("Fetching fresh category news", "category", category)
-
-		// FIXED: Use FetchNewsByCategory instead of FetchCategoryNews
-		freshArticles, err := h.newsService.FetchNewsByCategory(category, limit*2)
-		if err != nil {
-			h.logger.Error("Failed to fetch category news", "category", category, "error", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-				Message: fmt.Sprintf("Unable to retrieve news for category: %s", category),
-			})
-		}
-
-		// Convert []*models.Article to []models.Article for cache
-		articles = []models.Article{}
-		for _, article := range freshArticles {
-			articles = append(articles, *article)
-		}
-
-		// Cache the fresh results
-		if len(articles) > 0 {
-			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, category); err != nil {
-				h.logger.Error("Failed to cache category news", "category", category, "error", err)
-			}
-		}
-
-	}
-
-	// Filter for Indian content if requested
-	if onlyIndian {
-		var indianArticles []models.Article
-		for _, article := range articles {
-			if article.IsIndianContent {
-				indianArticles = append(indianArticles, article)
-			}
-		}
-		articles = indianArticles
-	}
-
-	// Implement pagination
-	totalArticles := len(articles)
-	startIdx := (page - 1) * limit
-	endIdx := startIdx + limit
-
-	if startIdx >= totalArticles {
-		articles = []models.Article{}
-	} else {
-		if endIdx > totalArticles {
-			endIdx = totalArticles
-		}
-		articles = articles[startIdx:endIdx]
-	}
-
-	response := &models.NewsFeedResponse{
-		Articles: articles,
-		Pagination: models.PaginationResponse{
-			Page:       page,
-			Limit:      limit,
-			Total:      totalArticles,
-			TotalPages: (totalArticles + limit - 1) / limit,
-			HasNext:    page < (totalArticles+limit-1)/limit,
-			HasPrev:    page > 1,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Category news request completed",
-		"category", category,
-		"articles_count", len(articles),
-		"total_articles", totalArticles,
-		"page", page,
-		"cache_hit", cacheHit,
-		"only_indian", onlyIndian,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// ===============================
-// NEWS SEARCH ENDPOINTS
-// ===============================
-
-// SearchNews searches for news articles
-// GET /api/v1/news/search
-func (h *NewsHandler) SearchNews(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// Parse search request
-	req := &models.NewsSearchRequest{
-		Page:  1,
-		Limit: 20,
-	}
-
-	if err := c.QueryParser(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid search parameters: " + err.Error(),
-		})
-	}
-
-	// Validate search query
-	if req.Query == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Please provide a search query",
-		})
-	}
-
-	// Validate pagination
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	if req.Limit < 1 || req.Limit > 50 {
-		req.Limit = 20
-	}
-
-	// Generate cache key for search
-	cacheKey := fmt.Sprintf("gonews:search:%s:page:%d:limit:%d",
-		strings.ToLower(req.Query), req.Page, req.Limit)
-
-	// Try cache first
-	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "search")
-	if err != nil {
-		h.logger.Error("Search cache retrieval error", "query", req.Query, "error", err)
-	}
-
-	if !cacheHit || len(articles) == 0 {
-		// Cache miss - perform fresh search
-		h.logger.Info("Performing fresh news search", "query", req.Query)
-
-		// For now, search within cached general content
-		// In production, implement proper search in database
-		generalCacheKey := "gonews:category:general"
-		allArticles, _, err := h.cacheService.GetArticles(c.Context(), generalCacheKey, "general")
-		if err != nil {
-			h.logger.Error("Failed to get articles for search", "error", err)
-			allArticles = []models.Article{}
-		}
-
-		// Simple search implementation (in production, use proper search engine)
-		articles = h.performSimpleSearch(allArticles, req.Query, req.OnlyIndian)
-
-		// Cache search results (shorter TTL for search)
-		if len(articles) > 0 {
-			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "search"); err != nil {
-				h.logger.Error("Failed to cache search results", "query", req.Query, "error", err)
-			}
-		}
-	}
-
-	// Implement pagination for search results
-	totalResults := len(articles)
-	startIdx := (req.Page - 1) * req.Limit
-	endIdx := startIdx + req.Limit
-
-	if startIdx >= totalResults {
-		articles = []models.Article{}
-	} else {
-		if endIdx > totalResults {
-			endIdx = totalResults
-		}
-		articles = articles[startIdx:endIdx]
-	}
-
-	response := &models.NewsSearchResponse{
-		Articles: articles,
-		Pagination: models.PaginationResponse{
-			Page:       req.Page,
-			Limit:      req.Limit,
-			Total:      totalResults,
-			TotalPages: (totalResults + req.Limit - 1) / req.Limit,
-			HasNext:    req.Page < (totalResults+req.Limit-1)/req.Limit,
-			HasPrev:    req.Page > 1,
-		},
-		Query:      req.Query,
-		TotalFound: totalResults,
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("News search completed",
-		"query", req.Query,
-		"results_count", len(articles),
-		"total_found", totalResults,
-		"page", req.Page,
-		"cache_hit", cacheHit,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// ===============================
-// TRENDING & FEATURED ENDPOINTS
-// ===============================
-
-// GetTrendingNews returns trending news articles
-// GET /api/v1/news/trending
-func (h *NewsHandler) GetTrendingNews(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	limit := c.QueryInt("limit", 10)
-	onlyIndian := c.QueryBool("only_indian", true) // Default to Indian trending
-
-	if limit < 1 || limit > 50 {
-		limit = 10
-	}
-
-	cacheKey := fmt.Sprintf("gonews:trending:limit:%d:indian:%t", limit, onlyIndian)
-
-	// Try cache first
-	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "trending")
-	if err != nil {
-		h.logger.Error("Trending cache retrieval error", "error", err)
-	}
-
-	if !cacheHit || len(articles) == 0 {
-		// Cache miss - get fresh trending content
-		h.logger.Info("Fetching fresh trending news")
-
-		// Get articles from multiple high-priority categories
-		trendingCategories := []string{"breaking", "politics", "sports", "business"}
-		var allArticles []models.Article
-
-		for _, category := range trendingCategories {
-			categoryKey := fmt.Sprintf("gonews:category:%s", category)
-			categoryArticles, _, err := h.cacheService.GetArticles(c.Context(), categoryKey, category)
-			if err == nil && len(categoryArticles) > 0 {
-				// Take top articles from each category
-				topCount := 5
-				if len(categoryArticles) < topCount {
-					topCount = len(categoryArticles)
-				}
-				allArticles = append(allArticles, categoryArticles[:topCount]...)
-			}
-		}
-
-		// If no cached content, fetch fresh trending content
-		if len(allArticles) == 0 {
-			freshArticles, err := h.newsService.FetchLatestNews("general", limit*3)
-			if err != nil {
-				h.logger.Error("Failed to fetch fresh trending news", "error", err)
-			} else {
-				for _, article := range freshArticles {
-					allArticles = append(allArticles, *article)
-				}
-			}
-		}
-
-		// Filter for trending articles (high view count, recent, featured)
-		articles = h.filterTrendingArticles(allArticles, onlyIndian, limit)
-
-		// Cache trending results (shorter TTL)
-		if len(articles) > 0 {
-			if err := h.cacheService.SetArticles(c.Context(), cacheKey, articles, "trending"); err != nil {
-				h.logger.Error("Failed to cache trending news", "error", err)
-			}
-		}
-	}
-
-	// Ensure we don't exceed the requested limit
-	if len(articles) > limit {
-		articles = articles[:limit]
-	}
-
-	response := &models.NewsFeedResponse{
-		Articles: articles,
-		Pagination: models.PaginationResponse{
-			Page:       1,
-			Limit:      limit,
-			Total:      len(articles),
-			TotalPages: 1,
-			HasNext:    false,
-			HasPrev:    false,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Trending news request completed",
-		"articles_count", len(articles),
-		"limit", limit,
-		"only_indian", onlyIndian,
-		"cache_hit", cacheHit,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// ===============================
-// ADMIN & MANAGEMENT ENDPOINTS
-// ===============================
-
-// RefreshNews manually triggers news refresh
-// POST /api/v1/news/refresh
-func (h *NewsHandler) RefreshNews(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// Check if user has admin privileges (implement proper auth check)
-	userID := c.Locals("user_id")
-	if userID == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Message: "Please log in to refresh news",
-		})
-	}
-
-	h.logger.Info("Manual news refresh triggered", "user_id", userID)
-
-	// Trigger comprehensive news aggregation
-	ctx, cancel := context.WithTimeout(c.Context(), 60*time.Second)
-	defer cancel()
-
-	if err := h.newsService.FetchAndCacheNews(ctx); err != nil {
-		h.logger.Error("Manual news refresh failed", "error", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
-			Message: "News refresh failed: " + err.Error(),
-		})
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Manual news refresh completed", "duration", duration)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "News refresh completed successfully",
-		Data: map[string]interface{}{
-			"duration_seconds": duration.Seconds(),
-			"timestamp":        time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// GetNewsStats returns news aggregation statistics
-// GET /api/v1/news/stats
-func (h *NewsHandler) GetNewsStats(c *fiber.Ctx) error {
-	// Get cache statistics
-	cacheStats := h.cacheService.GetCacheStats()
-
-	// Get cache health
-	cacheHealth := h.cacheService.GetCacheHealth()
-
-	// Combine statistics
-	stats := map[string]interface{}{
-		"cache": map[string]interface{}{
-			"total_requests": cacheStats.TotalRequests,
-			"cache_hits":     cacheStats.CacheHits,
-			"cache_misses":   cacheStats.CacheMisses,
-			"hit_rate":       cacheStats.HitRate,
-			"category_stats": cacheStats.CategoryStats,
-			"peak_hour_hits": cacheStats.PeakHourHits,
-			"off_peak_hits":  cacheStats.OffPeakHits,
-		},
-		"health":            cacheHealth,
-		"api_quotas":        h.config.GetAPISourceConfigs(),
-		"total_daily_quota": h.config.GetTotalDailyQuota(),
-		"timestamp":         time.Now().Format(time.RFC3339),
-	}
-
-	return c.JSON(models.SuccessResponse{
-		Message: "News statistics retrieved successfully",
-		Data:    stats,
-	})
-}
-
-// ===============================
-// CATEGORIES ENDPOINT
-// ===============================
-
-// GetCategories returns all available news categories
-// GET /api/v1/news/categories
-func (h *NewsHandler) GetCategories(c *fiber.Ctx) error {
-	// For now, return static categories (in production, fetch from database)
-	categories := []models.Category{
-		{ID: 1, Name: "Top Stories", Slug: "top-stories", Description: strPtr("Breaking news and top headlines from India"), ColorCode: "#FF6B35", Icon: strPtr("🔥"), IsActive: true, SortOrder: 1},
-		{ID: 2, Name: "Politics", Slug: "politics", Description: strPtr("Indian politics, government, and policy news"), ColorCode: "#DC3545", Icon: strPtr("🏛️"), IsActive: true, SortOrder: 2},
-		{ID: 3, Name: "Business", Slug: "business", Description: strPtr("Indian markets, economy, and business news"), ColorCode: "#28A745", Icon: strPtr("💼"), IsActive: true, SortOrder: 3},
-		{ID: 4, Name: "Sports", Slug: "sports", Description: strPtr("Cricket, IPL, Olympics, and Indian sports"), ColorCode: "#007BFF", Icon: strPtr("🏏"), IsActive: true, SortOrder: 4},
-		{ID: 5, Name: "Technology", Slug: "technology", Description: strPtr("Tech innovation, startups, and digital India"), ColorCode: "#6F42C1", Icon: strPtr("💻"), IsActive: true, SortOrder: 5},
-		{ID: 6, Name: "Entertainment", Slug: "entertainment", Description: strPtr("Bollywood, regional cinema, and celebrity news"), ColorCode: "#FD7E14", Icon: strPtr("🎬"), IsActive: true, SortOrder: 6},
-		{ID: 7, Name: "Health", Slug: "health", Description: strPtr("Healthcare, medical research, and wellness"), ColorCode: "#20C997", Icon: strPtr("🏥"), IsActive: true, SortOrder: 7},
-		{ID: 8, Name: "International", Slug: "international", Description: strPtr("World news relevant to India"), ColorCode: "#868E96", Icon: strPtr("🌍"), IsActive: true, SortOrder: 12},
-	}
-
-	response := &models.CategoryResponse{
-		Categories: categories,
-	}
-
-	return c.JSON(response)
-}
-
-// ===============================
-// BOOKMARK MANAGEMENT ENDPOINTS
-// ===============================
-
-// GetUserBookmarks returns user's bookmarked articles
-// GET /api/v1/news/bookmarks
-func (h *NewsHandler) GetUserBookmarks(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Message: "User authentication required for bookmarks",
-		})
-	}
-
-	// Parse query parameters
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-	category := c.Query("category", "")
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 50 {
-		limit = 20
-	}
-
-	// TODO: Implement actual database query for user bookmarks
-	// For now, return mock data structure
-	bookmarks := []models.Article{} // This should come from database
-
-	response := &models.NewsFeedResponse{
-		Articles: bookmarks,
-		Pagination: models.PaginationResponse{
-			Page:       page,
-			Limit:      limit,
-			Total:      len(bookmarks),
-			TotalPages: (len(bookmarks) + limit - 1) / limit,
-			HasNext:    false,
-			HasPrev:    page > 1,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("User bookmarks retrieved",
-		"user_id", userID.String(),
-		"bookmarks_count", len(bookmarks),
-		"category", category,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// GetDemoBookmarks returns demo bookmarks for unauthenticated users
-// GET /api/v1/news/bookmarks (without auth)
-func (h *NewsHandler) GetDemoBookmarks(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// Return some demo Indian news articles as bookmarks
-	demoBookmarks := []models.Article{
-		{
-			ID:              1001,
-			Title:           "India's Digital Revolution: UPI Transactions Cross 10 Billion",
-			Description:     strPtr("India's Unified Payments Interface (UPI) has revolutionized digital payments across the country"),
-			URL:             "https://example.com/upi-revolution",
-			ImageURL:        strPtr("https://example.com/images/upi.jpg"),
-			Source:          "Economic Times",
-			Author:          strPtr("Tech Reporter"),
-			CategoryID:      intPtr(3),
-			PublishedAt:     time.Now().Add(-2 * time.Hour),
-			IsIndianContent: true,
-			IsFeatured:      true,
-			ViewCount:       1250,
-		},
-		{
-			ID:              1002,
-			Title:           "IPL 2024: Mumbai Indians vs Chennai Super Kings - Match Preview",
-			Description:     strPtr("The much-awaited clash between two cricket giants in IPL 2024"),
-			URL:             "https://example.com/ipl-match",
-			ImageURL:        strPtr("https://example.com/images/ipl.jpg"),
-			Source:          "Cricinfo",
-			Author:          strPtr("Cricket Correspondent"),
-			CategoryID:      intPtr(4),
-			PublishedAt:     time.Now().Add(-1 * time.Hour),
-			IsIndianContent: true,
-			IsFeatured:      true,
-			ViewCount:       2100,
-		},
-	}
-
-	response := &models.NewsFeedResponse{
-		Articles: demoBookmarks,
-		Pagination: models.PaginationResponse{
-			Page:       1,
-			Limit:      20,
-			Total:      len(demoBookmarks),
-			TotalPages: 1,
-			HasNext:    false,
-			HasPrev:    false,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Demo bookmarks served",
-		"articles_count", len(demoBookmarks),
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// AddBookmark adds an article to user's bookmarks
-// POST /api/v1/news/bookmarks
-func (h *NewsHandler) AddBookmark(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Message: "User authentication required to add bookmarks",
-		})
-	}
-
-	var req struct {
-		ArticleID string `json:"article_id" validate:"required"`
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid request body",
-		})
-	}
-
-	if req.ArticleID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Article ID is required",
-		})
-	}
-
-	// TODO: Implement actual database insertion for bookmark
-	// For now, return success response
-
-	duration := time.Since(startTime)
-	h.logger.Info("Bookmark added",
-		"user_id", userID.String(),
-		"article_id", req.ArticleID,
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Article bookmarked successfully",
-		Data: map[string]interface{}{
-			"article_id":    req.ArticleID,
-			"bookmarked_at": time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// RemoveBookmark removes an article from user's bookmarks
-// DELETE /api/v1/news/bookmarks/:id
-func (h *NewsHandler) RemoveBookmark(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Message: "User authentication required to remove bookmarks",
-		})
-	}
-
-	articleID := c.Params("id")
-	if articleID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Article ID is required",
-		})
-	}
-
-	// TODO: Implement actual database deletion for bookmark
-
-	duration := time.Since(startTime)
-	h.logger.Info("Bookmark removed",
-		"user_id", userID.String(),
-		"article_id", articleID,
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Bookmark removed successfully",
-		Data: map[string]interface{}{
-			"article_id": articleID,
-			"removed_at": time.Now().Format(time.RFC3339),
-		},
-	})
-}
-
-// ===============================
-// READING HISTORY ENDPOINTS
-// ===============================
-
-// GetReadingHistory returns user's reading history
-// GET /api/v1/news/history
-func (h *NewsHandler) GetReadingHistory(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Message: "User authentication required for reading history",
-		})
-	}
-
-	// Parse query parameters
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-	days := c.QueryInt("days", 30) // Last 30 days by default
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
-	if days < 1 || days > 365 {
-		days = 30
-	}
-
-	// TODO: Implement actual database query for reading history
-	history := []models.Article{} // This should come from database
-
-	response := &models.NewsFeedResponse{
-		Articles: history,
-		Pagination: models.PaginationResponse{
-			Page:       page,
-			Limit:      limit,
-			Total:      len(history),
-			TotalPages: (len(history) + limit - 1) / limit,
-			HasNext:    false,
-			HasPrev:    page > 1,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Reading history retrieved",
-		"user_id", userID.String(),
-		"history_count", len(history),
-		"days", days,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// TrackArticleRead tracks when a user reads an article
-// POST /api/v1/news/read
-func (h *NewsHandler) TrackArticleRead(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	var req struct {
-		ArticleID   string `json:"article_id" validate:"required"`
-		ReadTime    int    `json:"read_time,omitempty"`    // seconds spent reading
-		ScrollDepth int    `json:"scroll_depth,omitempty"` // percentage scrolled
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Invalid request body",
-		})
-	}
-
-	if req.ArticleID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-			Message: "Article ID is required",
-		})
-	}
-
-	// Check if user is authenticated (optional for this endpoint)
-	userID, isAuth := middleware.GetUserIDFromContext(c)
-
-	// TODO: Implement actual database insertion for reading history
-	// For authenticated users: store in user-specific reading history
-	// For anonymous users: could store in analytics for trending calculation
-
-	var logMessage string
-	var userData map[string]interface{}
-
-	if isAuth {
-		logMessage = "Article read tracked for user"
-		userData = map[string]interface{}{
-			"user_id":       userID.String(),
-			"authenticated": true,
-		}
-	} else {
-		logMessage = "Article read tracked anonymously"
-		userData = map[string]interface{}{
-			"ip_address":    c.IP(),
-			"authenticated": false,
-		}
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info(logMessage,
-		"article_id", req.ArticleID,
-		"read_time", req.ReadTime,
-		"scroll_depth", req.ScrollDepth,
-		"duration", duration,
-	)
-
-	return c.JSON(models.SuccessResponse{
-		Message: "Reading activity tracked successfully",
-		Data: map[string]interface{}{
-			"article_id": req.ArticleID,
-			"tracked_at": time.Now().Format(time.RFC3339),
-			"user_data":  userData,
-		},
-	})
-}
-
-// ===============================
-// PERSONALIZED FEED ENDPOINTS
-// ===============================
-
-// GetPersonalizedFeed returns personalized news feed for authenticated users
-// GET /api/v1/news/personalized
-func (h *NewsHandler) GetPersonalizedFeed(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	userID, ok := middleware.GetUserIDFromContext(c)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
-			Message: "User authentication required for personalized feed",
-		})
-	}
-
-	// Parse query parameters
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 50 {
-		limit = 20
-	}
-
-	// TODO: Implement personalization algorithm based on:
-	// - User's reading history
-	// - Bookmarked categories
-	// - Time preferences
-	// - Location-based content
-
-	// For now, return India-focused content with some personalization hints
-	cacheKey := fmt.Sprintf("gonews:personalized:%s:page:%d:limit:%d", userID.String(), page, limit)
-
-	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "personalized")
-	if err != nil || !cacheHit {
-		// Fallback to general Indian content
-		articles, _, _ = h.cacheService.GetArticles(c.Context(), "gonews:category:general", "general")
-
-		// If no cached content, fetch fresh personalized content
-		if len(articles) == 0 {
-			freshArticles, err := h.newsService.FetchLatestNews("general", limit)
-			if err == nil {
-				for _, article := range freshArticles {
-					articles = append(articles, *article)
-				}
-			}
-		}
-
-		// Cache personalized results
-		if len(articles) > 0 {
-			h.cacheService.SetArticles(c.Context(), cacheKey, articles, "personalized")
-		}
-	}
-
-	// Apply basic personalization (prioritize Indian content)
-	var personalizedArticles []models.Article
-	for _, article := range articles {
-		if article.IsIndianContent {
-			personalizedArticles = append(personalizedArticles, article)
-		}
-	}
-
-	// Limit results
-	if len(personalizedArticles) > limit {
-		personalizedArticles = personalizedArticles[:limit]
-	}
-
-	response := &models.NewsFeedResponse{
-		Articles: personalizedArticles,
-		Pagination: models.PaginationResponse{
-			Page:       page,
-			Limit:      limit,
-			Total:      len(personalizedArticles),
-			TotalPages: (len(personalizedArticles) + limit - 1) / limit,
-			HasNext:    false,
-			HasPrev:    page > 1,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("Personalized feed served",
-		"user_id", userID.String(),
-		"articles_count", len(personalizedArticles),
-		"cache_hit", cacheHit,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
-}
-
-// GetIndiaFocusedFeed returns India-focused feed for unauthenticated users
-// GET /api/v1/news/personalized (without auth)
-func (h *NewsHandler) GetIndiaFocusedFeed(c *fiber.Ctx) error {
-	startTime := time.Now()
-
-	// Parse query parameters
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 50 {
-		limit = 20
-	}
-
-	// Get Indian-focused content from cache
-	cacheKey := fmt.Sprintf("gonews:india-focused:page:%d:limit:%d", page, limit)
-
-	articles, cacheHit, err := h.cacheService.GetArticles(c.Context(), cacheKey, "india")
-	if err != nil || !cacheHit {
-		// Get from multiple Indian categories
-		categories := []string{"politics", "business", "sports"}
-		var allArticles []models.Article
-
-		for _, category := range categories {
-			categoryKey := fmt.Sprintf("gonews:category:%s", category)
-			categoryArticles, _, err := h.cacheService.GetArticles(c.Context(), categoryKey, category)
-			if err == nil {
-				// Take top articles from each category
-				topCount := 5
-				if len(categoryArticles) < topCount {
-					topCount = len(categoryArticles)
-				}
-				for _, article := range categoryArticles[:topCount] {
-					if article.IsIndianContent {
-						allArticles = append(allArticles, article)
-					}
-				}
-			}
-		}
-
-		// If no cached content, fetch fresh India-focused content
-		if len(allArticles) == 0 {
-			freshArticles, err := h.newsService.FetchLatestNews("general", limit*2)
-			if err == nil {
-				for _, article := range freshArticles {
-					if article.IsIndianContent {
-						allArticles = append(allArticles, *article)
-					}
-				}
-			}
-		}
-
-		articles = allArticles
-
-		// Cache the India-focused results
-		if len(articles) > 0 {
-			h.cacheService.SetArticles(c.Context(), cacheKey, articles, "india")
-		}
-	}
-
-	// Limit results
-	if len(articles) > limit {
-		articles = articles[:limit]
-	}
-
-	response := &models.NewsFeedResponse{
-		Articles: articles,
-		Pagination: models.PaginationResponse{
-			Page:       page,
-			Limit:      limit,
-			Total:      len(articles),
-			TotalPages: (len(articles) + limit - 1) / limit,
-			HasNext:    false,
-			HasPrev:    page > 1,
-		},
-	}
-
-	duration := time.Since(startTime)
-	h.logger.Info("India-focused feed served",
-		"articles_count", len(articles),
-		"cache_hit", cacheHit,
-		"duration", duration,
-	)
-
-	return c.JSON(response)
 }

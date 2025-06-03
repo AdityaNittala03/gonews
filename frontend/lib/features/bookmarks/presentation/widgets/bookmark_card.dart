@@ -387,7 +387,7 @@ class _BookmarkCardState extends State<BookmarkCard>
       child: Row(
         children: [
           // Author - FIXED: Use safeAuthor and handle empty check
-          if (widget.article.safeAuthor != 'Unknown Author') ...[
+          if (widget.article.safeAuthor != 'Author') ...[
             const Icon(
               Icons.person_outline,
               size: 16,

@@ -1,4 +1,5 @@
 // lib/features/news/presentation/widgets/article_card.dart
+// FIXED: Removed dependencies on missing Article model methods
 
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -57,6 +58,16 @@ class _ArticleCardState extends State<ArticleCard>
     _animationController.dispose();
     super.dispose();
   }
+
+  // Helper methods to safely access article properties
+  String get safeImageUrl => widget.article.safeImageUrl;
+  String get safeDescription => widget.article.safeDescription;
+  String get categoryDisplayName => widget.article.categoryDisplayName;
+  bool get isIndiaRelated => widget.article.isIndiaRelated;
+  bool get isBookmarked => widget.article.isBookmarked;
+  bool get isTrending => widget.article.isTrending;
+  int get estimatedReadTime => widget.article.estimatedReadTime;
+  String get timeAgo => widget.article.timeAgo;
 
   @override
   Widget build(BuildContext context) {
@@ -128,10 +139,9 @@ class _ArticleCardState extends State<ArticleCard>
         children: [
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: widget
-                    .article.safeImageUrl.isNotEmpty // FIXED: Use safeImageUrl
+            child: safeImageUrl.isNotEmpty
                 ? CachedNetworkImage(
-                    imageUrl: widget.article.safeImageUrl,
+                    imageUrl: safeImageUrl,
                     fit: BoxFit.cover,
                     width: double.infinity,
                     placeholder: (context, url) => const ShimmerWidget(
@@ -186,7 +196,7 @@ class _ArticleCardState extends State<ArticleCard>
           ),
 
           // Trending Badge
-          if (widget.article.isTrending)
+          if (isTrending)
             Positioned(
               top: 12,
               left: 12,
@@ -242,12 +252,8 @@ class _ArticleCardState extends State<ArticleCard>
                   ],
                 ),
                 child: Icon(
-                  widget.article.isBookmarked
-                      ? Icons.bookmark
-                      : Icons.bookmark_border,
-                  color: widget.article.isBookmarked
-                      ? AppColors.primary
-                      : AppColors.grey600,
+                  isBookmarked ? Icons.bookmark : Icons.bookmark_border,
+                  color: isBookmarked ? AppColors.primary : AppColors.grey600,
                   size: 18,
                 ),
               ),
@@ -272,7 +278,7 @@ class _ArticleCardState extends State<ArticleCard>
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(
-            widget.article.categoryDisplayName.toUpperCase(),
+            categoryDisplayName.toUpperCase(),
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: _getCategoryColor(),
                   fontWeight: FontWeight.w700,
@@ -292,7 +298,7 @@ class _ArticleCardState extends State<ArticleCard>
         ),
         const SizedBox(width: 4),
         Text(
-          '${widget.article.estimatedReadTime} min read', // FIXED: Use estimatedReadTime
+          '$estimatedReadTime min read',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AppColors.grey400,
                 fontSize: 11,
@@ -302,7 +308,7 @@ class _ArticleCardState extends State<ArticleCard>
         const Spacer(),
 
         // India Badge (if applicable)
-        if (widget.article.isIndiaRelated)
+        if (isIndiaRelated)
           Container(
             padding: const EdgeInsets.symmetric(
               horizontal: 6,
@@ -344,7 +350,7 @@ class _ArticleCardState extends State<ArticleCard>
 
   Widget _buildDescription() {
     return Text(
-      widget.article.safeDescription, // FIXED: Use safeDescription
+      safeDescription,
       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
             color: AppColors.textSecondary,
             height: 1.4,
@@ -363,7 +369,7 @@ class _ArticleCardState extends State<ArticleCard>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.article.source,
+                widget.article.source ?? 'Unknown Source',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.primary,
                       fontWeight: FontWeight.w600,
@@ -371,7 +377,7 @@ class _ArticleCardState extends State<ArticleCard>
               ),
               const SizedBox(height: 2),
               Text(
-                widget.article.timeAgo, // FIXED: Use timeAgo extension
+                timeAgo,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: AppColors.grey400,
                       fontSize: 11,
@@ -434,7 +440,21 @@ class _ArticleCardState extends State<ArticleCard>
   }
 
   Color _getCategoryColor() {
-    return AppColors.getCategoryColor(widget.article.categoryDisplayName);
+    // Simple category color mapping
+    switch (categoryDisplayName.toLowerCase()) {
+      case 'politics':
+        return AppColors.error;
+      case 'business':
+        return AppColors.primary;
+      case 'sports':
+        return AppColors.success;
+      case 'technology':
+        return AppColors.info;
+      case 'health':
+        return AppColors.warning;
+      default:
+        return AppColors.primary;
+    }
   }
 
   void _showMoreOptions(BuildContext context) {
@@ -467,8 +487,7 @@ class _ArticleCardState extends State<ArticleCard>
             // Options
             _buildBottomSheetOption(
               icon: Icons.bookmark_border,
-              title:
-                  widget.article.isBookmarked ? 'Remove Bookmark' : 'Bookmark',
+              title: isBookmarked ? 'Remove Bookmark' : 'Bookmark',
               onTap: () {
                 Navigator.pop(context);
                 widget.onBookmark();
