@@ -51,7 +51,7 @@ func ConnectRedis(redisURL string) *redis.Client {
 	return redis.NewClient(opt)
 }
 
-// Migrate runs database migrations - Updated for Checkpoint 3: News Aggregation
+// Migrate runs database migrations - Updated for OTP verification
 func Migrate(db *sqlx.DB) error {
 	migrations := []string{
 		// Users table with India-specific optimizations (existing)
@@ -83,6 +83,24 @@ func Migrate(db *sqlx.DB) error {
 			is_active BOOLEAN DEFAULT true,
 			is_verified BOOLEAN DEFAULT false,
 			last_login_at TIMESTAMP WITH TIME ZONE,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+		)`,
+
+		// NEW: OTP Codes Table for Email/Phone Verification
+		`CREATE TABLE IF NOT EXISTS otp_codes (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NULL REFERENCES users(id) ON DELETE CASCADE,
+			email VARCHAR(255) NOT NULL,
+			phone VARCHAR(20) NULL,
+			code VARCHAR(6) NOT NULL,
+			purpose VARCHAR(50) NOT NULL CHECK (purpose IN ('registration', 'password_reset', 'email_verification', 'phone_verification')),
+			expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			used_at TIMESTAMP WITH TIME ZONE NULL,
+			attempts INTEGER DEFAULT 0,
+			max_attempts INTEGER DEFAULT 3,
+			ip_address INET,
+			user_agent TEXT,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 		)`,
@@ -240,6 +258,15 @@ func Migrate(db *sqlx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active) WHERE is_active = true`,
 		`CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC)`,
 
+		// NEW: Indexes for OTP Codes
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_email ON otp_codes(email)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_code ON otp_codes(code)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_purpose ON otp_codes(purpose)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_expires_at ON otp_codes(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_used_at ON otp_codes(used_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_email_purpose ON otp_codes(email, purpose)`,
+		`CREATE INDEX IF NOT EXISTS idx_otp_codes_active ON otp_codes(email, purpose, expires_at) WHERE used_at IS NULL`,
+
 		// Indexes for Articles
 		`CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_articles_category_published ON articles(category_id, published_at DESC)`,
@@ -280,6 +307,12 @@ func Migrate(db *sqlx.DB) error {
 		 BEFORE UPDATE ON users 
 		 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
 
+		// NEW: OTP Codes trigger
+		`DROP TRIGGER IF EXISTS update_otp_codes_updated_at ON otp_codes`,
+		`CREATE TRIGGER update_otp_codes_updated_at 
+		 BEFORE UPDATE ON otp_codes 
+		 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`,
+
 		`DROP TRIGGER IF EXISTS update_categories_updated_at ON categories`,
 		`CREATE TRIGGER update_categories_updated_at 
 		 BEFORE UPDATE ON categories 
@@ -309,7 +342,7 @@ func Migrate(db *sqlx.DB) error {
 		 WHERE NOT EXISTS (SELECT 1 FROM categories WHERE categories.name = new_categories.name)`,
 
 		// ===============================
-		// NEW: CHECKPOINT 3 - RAPIDAPI MIGRATION STEPS (Migration 003)
+		// EXISTING: CHECKPOINT 3 - RAPIDAPI MIGRATION STEPS (Migration 003)
 		// ===============================
 
 		// Update API Usage table to support RapidAPI-dominant strategy

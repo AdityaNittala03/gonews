@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:go_router/go_router.dart';
 
+// Update these import paths to match your project structure
 import '../../../../core/constants/color_constants.dart';
 import '../../../../services/upi_donation_service.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
@@ -98,12 +99,6 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
                 _buildHeader(),
                 const SizedBox(height: 32),
                 _buildQuickAmounts(upiService),
-                const SizedBox(height: 24),
-                _buildCustomAmountToggle(),
-                if (showCustomAmount) ...[
-                  const SizedBox(height: 16),
-                  _buildCustomAmountSection(upiService),
-                ],
                 const SizedBox(height: 32),
                 _buildSelectedQrCode(upiService),
                 const SizedBox(height: 32),
@@ -192,7 +187,7 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Quick Donation Amounts',
+          'Choose Donation Amount',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w600,
@@ -207,7 +202,7 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
             crossAxisCount: 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
-            childAspectRatio: 2.2,
+            childAspectRatio: 2.0, // Reduced to give more height
           ),
           itemCount: UpiDonationService.donationAmounts.length,
           itemBuilder: (context, index) {
@@ -218,12 +213,19 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
               onTap: () {
                 setState(() {
                   selectedAmount = amount;
-                  showCustomAmount = false;
-                  _customAmountController.clear();
+                  if (amount.isCustom) {
+                    showCustomAmount = true;
+                    // Clear custom amount when switching to custom option
+                    _customAmountController.clear();
+                  } else {
+                    showCustomAmount = false;
+                    _customAmountController.clear();
+                  }
                 });
               },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
+                height: 80, // Fixed height to prevent overflow
                 decoration: BoxDecoration(
                   color: isSelected ? AppColors.primary : AppColors.white,
                   border: Border.all(
@@ -247,133 +249,102 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
                           ),
                         ],
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      amount.emoji,
-                      style: const TextStyle(fontSize: 24),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      amount.label,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: isSelected ? AppColors.white : AppColors.primary,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        amount.emoji,
+                        style: const TextStyle(fontSize: 18),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      amount.description,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isSelected
-                            ? AppColors.white.withOpacity(0.9)
-                            : AppColors.textSecondary,
+                      const SizedBox(height: 2),
+                      Text(
+                        amount.label,
+                        style: TextStyle(
+                          fontSize: amount.isCustom ? 14 : 16,
+                          fontWeight: FontWeight.bold,
+                          color:
+                              isSelected ? AppColors.white : AppColors.primary,
+                        ),
                       ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                      const SizedBox(height: 1),
+                      Expanded(
+                        child: Center(
+                          child: Text(
+                            amount.description,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                              color: isSelected
+                                  ? AppColors.white.withOpacity(0.95)
+                                  : AppColors.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
           },
         ),
+        // Show custom amount input when custom option is selected
+        if (showCustomAmount && selectedAmount?.isCustom == true) ...[
+          const SizedBox(height: 20),
+          _buildCustomAmountInput(),
+        ],
       ],
     );
   }
 
-  Widget _buildCustomAmountToggle() {
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          showCustomAmount = !showCustomAmount;
-          if (showCustomAmount) {
-            selectedAmount = null;
-          }
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: showCustomAmount
-              ? AppColors.primary.withOpacity(0.1)
-              : AppColors.white,
-          border: Border.all(
-            color: showCustomAmount ? AppColors.primary : AppColors.grey300,
-            width: 2,
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.edit,
-              color: showCustomAmount
-                  ? AppColors.primary
-                  : AppColors.textSecondary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Enter Custom Amount',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: showCustomAmount
-                      ? AppColors.primary
-                      : AppColors.textPrimary,
-                ),
-              ),
-            ),
-            Icon(
-              showCustomAmount
-                  ? Icons.keyboard_arrow_up
-                  : Icons.keyboard_arrow_down,
-              color: showCustomAmount
-                  ? AppColors.primary
-                  : AppColors.textSecondary,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCustomAmountSection(UpiDonationService upiService) {
+  Widget _buildCustomAmountInput() {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.grey300),
+        color: AppColors.primary.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.primary.withOpacity(0.3), width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Custom Amount',
+            'Enter Custom Amount',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+              color: AppColors.primary,
             ),
           ),
           const SizedBox(height: 12),
           Row(
             children: [
-              Text(
-                '₹',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                decoration: BoxDecoration(
                   color: AppColors.primary,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    bottomLeft: Radius.circular(8),
+                  ),
+                ),
+                child: Text(
+                  '₹',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.white,
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
               Expanded(
                 child: TextFormField(
                   controller: _customAmountController,
@@ -385,16 +356,31 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
                   decoration: InputDecoration(
                     hintText: 'Enter amount',
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.grey300),
+                      borderRadius: const BorderRadius.only(
+                        topRight: Radius.circular(8),
+                        bottomRight: Radius.circular(8),
+                      ),
+                      borderSide: BorderSide(color: AppColors.primary),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: const BorderRadius.only(
+                        topRight: Radius.circular(8),
+                        bottomRight: Radius.circular(8),
+                      ),
+                      borderSide: BorderSide(color: AppColors.primary),
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: const BorderRadius.only(
+                        topRight: Radius.circular(8),
+                        bottomRight: Radius.circular(8),
+                      ),
                       borderSide:
                           BorderSide(color: AppColors.primary, width: 2),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 16),
+                    filled: true,
+                    fillColor: AppColors.white,
                   ),
                   style: TextStyle(
                     fontSize: 18,
@@ -402,15 +388,21 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
                   ),
                   onChanged: (value) {
                     setState(() {
-                      // Clear quick amount selection when custom amount is entered
-                      if (value.isNotEmpty) {
-                        selectedAmount = null;
-                      }
+                      // Trigger rebuild to update QR code
                     });
                   },
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '💡 Minimum: ₹1 • Maximum: ₹99,999',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              fontStyle: FontStyle.italic,
+            ),
           ),
           const SizedBox(height: 16),
           TextFormField(
@@ -420,12 +412,19 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
               hintText: 'e.g., Thanks for GoNews!',
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: AppColors.grey300),
+                borderSide: BorderSide(color: AppColors.primary),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide:
+                    BorderSide(color: AppColors.primary.withOpacity(0.5)),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide(color: AppColors.primary, width: 2),
               ),
+              filled: true,
+              fillColor: AppColors.white,
             ),
             maxLength: 100,
           ),
@@ -465,7 +464,7 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
       );
     }
 
-    final String qrData = showCustomAmount &&
+    final String qrData = (selectedAmount?.isCustom == true) &&
             _customNoteController.text.isNotEmpty
         ? upiService.generateCustomUpiQrData(amount, _customNoteController.text)
         : upiService.generateUpiQrData(amount);
@@ -674,9 +673,10 @@ class _UpiDonationScreenState extends ConsumerState<UpiDonationScreen>
   }
 
   double? _getSelectedAmount() {
-    if (selectedAmount != null) {
+    if (selectedAmount != null && !selectedAmount!.isCustom) {
       return selectedAmount!.amount;
-    } else if (showCustomAmount && _customAmountController.text.isNotEmpty) {
+    } else if (selectedAmount?.isCustom == true &&
+        _customAmountController.text.isNotEmpty) {
       return double.tryParse(_customAmountController.text);
     }
     return null;

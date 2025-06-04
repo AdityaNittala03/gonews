@@ -1,5 +1,6 @@
 // frontend/lib/features/profile/presentation/screens/profile_screen.dart
-// FIXED: Now displays real authenticated user data instead of hardcoded demo data
+// CLEAN REBUILD: Removed dark mode, language settings, and non-functional read stats
+// FUNCTIONAL: Real authentication data, working bookmarks, donation functionality
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,7 +13,7 @@ import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 import '../../../../core/providers/theme_provider.dart' as theme_provider;
 import '../../../../core/theme/app_theme.dart';
-import '../../../../services/auth_service.dart'; // ADDED: Import AuthService
+import '../../../../services/auth_service.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -26,9 +27,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
-
-  // REMOVED: Hardcoded mock user data
-  // FIXED: Now uses real authentication data dynamically
 
   @override
   void initState() {
@@ -67,7 +65,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   @override
   Widget build(BuildContext context) {
     final bookmarkCount = ref.watch(bookmarkCountProvider);
-    final authState = ref.watch(authStateProvider); // ADDED: Watch auth state
+    final authState = ref.watch(authStateProvider);
 
     return Scaffold(
       backgroundColor: AppColors.getBackgroundColor(context),
@@ -85,7 +83,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
-                _buildProfileHeader(authState), // FIXED: Pass auth state
+                _buildProfileHeader(authState),
                 const SizedBox(height: 32),
                 _buildStatsSection(bookmarkCount),
                 const SizedBox(height: 32),
@@ -106,75 +104,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      title: const Text('Profile'),
-      backgroundColor: AppColors.white,
-      elevation: 0,
-      systemOverlayStyle: SystemUiOverlayStyle.dark,
-      leading: IconButton(
-        onPressed: () => context.pop(),
-        icon: const Icon(Icons.arrow_back_ios),
-      ),
-      actions: [
-        // Home icon
-        IconButton(
-          onPressed: () => context.go('/home'),
-          icon: const Icon(Icons.home_outlined),
-          tooltip: 'Home',
-        ),
-        // Search icon
-        IconButton(
-          onPressed: () => context.push('/search'),
-          icon: const Icon(Icons.search_outlined),
-          tooltip: 'Search',
-        ),
-        // Bookmark icon with badge
-        Consumer(
-          builder: (context, ref, child) {
-            final bookmarkCount = ref.watch(bookmarkCountProvider);
-
-            return Stack(
-              children: [
-                IconButton(
-                  onPressed: () => context.push('/bookmarks'),
-                  icon: const Icon(Icons.bookmark_outline),
-                  tooltip: 'Bookmarks',
-                ),
-                if (bookmarkCount > 0)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 14,
-                        minHeight: 14,
-                      ),
-                      child: Text(
-                        bookmarkCount > 99 ? '99+' : '$bookmarkCount',
-                        style: const TextStyle(
-                          color: AppColors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  // FIXED: Profile header now uses real authentication data
   Widget _buildProfileHeader(AuthState authState) {
     // Extract user data from authentication state
     String userName = "Guest User";
@@ -237,7 +166,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
 
           const SizedBox(height: 16),
 
-          // User Name - FIXED: Now shows real authenticated user name
+          // User Name
           Text(
             userName,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -248,7 +177,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
 
           const SizedBox(height: 4),
 
-          // User Email - FIXED: Now shows real authenticated user email
+          // User Email
           Text(
             userEmail,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
@@ -271,9 +200,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
+  // CLEAN STATS SECTION: Only shows working functionality
   Widget _buildStatsSection(int bookmarkCount) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(16),
@@ -285,43 +215,79 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           ),
         ],
       ),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: _buildStatItem(
-              icon: Icons.bookmark,
-              label: 'Bookmarks',
-              value: bookmarkCount.toString(),
-              color: AppColors.primary,
-              onTap: () => context.push('/bookmarks'),
-            ),
+          // Main bookmark stat - centered and prominent
+          _buildMainStatItem(
+            icon: Icons.bookmark,
+            label: 'Saved Articles',
+            value: bookmarkCount.toString(),
+            color: AppColors.primary,
+            onTap: () => context.push('/bookmarks'),
           ),
+
+          const SizedBox(height: 20),
+
+          // Future features preview
           Container(
-            width: 1,
-            height: 40,
-            color: AppColors.grey200,
-          ),
-          Expanded(
-            child: _buildStatItem(
-              icon: Icons.visibility,
-              label: 'Read Articles',
-              value: '0', // TODO: Implement read count
-              color: AppColors.success,
-              onTap: () {}, // TODO: Navigate to read articles
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.primary.withOpacity(0.05),
+                  AppColors.secondary.withOpacity(0.05)
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: AppColors.primary.withOpacity(0.1),
+                width: 1,
+              ),
             ),
-          ),
-          Container(
-            width: 1,
-            height: 40,
-            color: AppColors.grey200,
-          ),
-          Expanded(
-            child: _buildStatItem(
-              icon: Icons.schedule,
-              label: 'Reading Time',
-              value: '0m', // TODO: Implement reading time
-              color: AppColors.info,
-              onTap: () {}, // TODO: Show reading stats
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.analytics_outlined,
+                    size: 18,
+                    color: AppColors.primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Reading Analytics Coming Soon!',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Track reading time, articles read, and more',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_forward_ios,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
+              ],
             ),
           ),
         ],
@@ -329,7 +295,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  Widget _buildStatItem({
+  Widget _buildMainStatItem({
     required IconData icon,
     required String label,
     required String value,
@@ -338,40 +304,60 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              shape: BoxShape.circle,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.05),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: color.withOpacity(0.2),
+            width: 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: 32,
+              ),
             ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 20,
+            const SizedBox(height: 16),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textPrimary,
+                  ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
+  // CLEAN SETTINGS SECTION: Removed dark mode and language
   Widget _buildSettingsSection() {
     return Container(
       decoration: BoxDecoration(
@@ -403,28 +389,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             title: 'Notifications',
             subtitle: 'Push notifications and alerts',
             onTap: _openNotificationSettings,
-          ),
-          _buildSettingsItem(
-            icon: Icons.dark_mode_outlined,
-            title: 'Dark Mode',
-            subtitle: 'Switch to dark theme',
-            onTap: _toggleDarkMode,
-            trailing: Consumer(
-              builder: (context, ref, child) {
-                final themeState = ref.watch(theme_provider.themeProvider);
-                return Switch(
-                  value: themeState.isDarkMode,
-                  onChanged: (value) => _toggleDarkMode(),
-                  activeColor: AppColors.primary,
-                );
-              },
-            ),
-          ),
-          _buildSettingsItem(
-            icon: Icons.language_outlined,
-            title: 'Language',
-            subtitle: 'English',
-            onTap: _openLanguageSettings,
           ),
           _buildSettingsItem(
             icon: Icons.storage_outlined,
@@ -494,7 +458,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
 
   Widget _buildDonationSection() {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
@@ -511,30 +475,38 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       ),
       child: Column(
         children: [
-          Icon(
-            Icons.favorite_outline,
-            size: 32,
-            color: AppColors.primary,
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.favorite_outline,
+              size: 32,
+              color: AppColors.primary,
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Text(
             'Support GoNews',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary,
                 ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Help us keep bringing you the latest news from India and around the world',
+            'Help us keep bringing you the latest news from India and around the world. Your support helps us stay independent and ad-light.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
+                  height: 1.5,
                 ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           CustomButton(
-            text: 'Donate',
+            text: 'Donate with UPI',
             onPressed: _openDonation,
             type: ButtonType.primary,
             width: double.infinity,
@@ -560,14 +532,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: AppColors.grey100,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
                 icon,
-                size: 20,
+                size: 22,
                 color: AppColors.textPrimary,
               ),
             ),
@@ -583,7 +555,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                           color: AppColors.textPrimary,
                         ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
                     subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -623,6 +595,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
           '${AppConstants.appName} ${AppConstants.appVersion}',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: AppColors.textSecondary,
+                fontWeight: FontWeight.w500,
               ),
         ),
         const SizedBox(height: 4),
@@ -643,18 +616,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
 
   void _openNotificationSettings() {
     context.push('/notification-settings');
-  }
-
-  void _toggleDarkMode() {
-    final currentTheme = ref.read(theme_provider.themeProvider);
-    final newMode = currentTheme.isDarkMode
-        ? theme_provider.ThemeMode.light
-        : theme_provider.ThemeMode.dark;
-    ref.read(theme_provider.themeProvider.notifier).setThemeMode(newMode);
-  }
-
-  void _openLanguageSettings() {
-    _showComingSoonSnackbar('Language Settings');
   }
 
   void _openStorageSettings() {
@@ -681,7 +642,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     context.push('/donate');
   }
 
-  // FIXED: Sign out now uses real AuthService
   void _signOut() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -703,7 +663,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
 
     if (confirmed == true) {
-      // FIXED: Use real authentication service
       try {
         await ref.read(authStateProvider.notifier).signOut();
         if (context.mounted) {

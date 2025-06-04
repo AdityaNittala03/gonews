@@ -1,4 +1,4 @@
-// lib/features/auth/presentation/screens/forgot_password_screen.dart
+// lib/features/auth/presentation/screens/forgot_password_screen.dart - UPDATED WITH OTP
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +8,7 @@ import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../shared/widgets/common/custom_text_field.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
+import '../../../../services/auth_service.dart';
 
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({Key? key}) : super(key: key);
@@ -23,7 +24,6 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
   final _emailController = TextEditingController();
 
   bool _isLoading = false;
-  bool _emailSent = false;
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -80,7 +80,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
           Align(
             alignment: Alignment.centerLeft,
             child: GestureDetector(
-              onTap: () => context.pop(),
+              onTap: _isLoading ? null : () => context.pop(),
               child: Container(
                 width: 40,
                 height: 40,
@@ -88,9 +88,9 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
                   color: AppColors.grey50,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.arrow_back_ios_new,
-                  color: AppColors.textPrimary,
+                  color: _isLoading ? AppColors.grey400 : AppColors.textPrimary,
                   size: 18,
                 ),
               ),
@@ -107,9 +107,16 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
               decoration: BoxDecoration(
                 color: AppColors.primaryContainer,
                 borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.2),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
               ),
               child: Icon(
-                _emailSent ? Icons.mark_email_read_outlined : Icons.lock_reset,
+                Icons.lock_reset,
                 size: 40,
                 color: AppColors.primary,
               ),
@@ -120,7 +127,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
 
           // Title
           Text(
-            _emailSent ? 'Check your email' : 'Forgot Password?',
+            'Forgot Password?',
             style: Theme.of(context).textTheme.displaySmall?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary,
@@ -132,9 +139,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
 
           // Description
           Text(
-            _emailSent
-                ? 'We\'ve sent a password reset link to ${_emailController.text}'
-                : 'Don\'t worry! It happens. Please enter your email address and we will send you a link to reset your password.',
+            'Don\'t worry! Enter your email address and we\'ll send you a verification code to reset your password.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                   height: 1.5,
@@ -144,51 +149,66 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
 
           const SizedBox(height: 48),
 
-          if (!_emailSent) ...[
-            // Email Form
-            Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  CustomTextField(
-                    controller: _emailController,
-                    hintText: 'Email',
-                    prefixIcon: Icons.email_outlined,
-                    keyboardType: TextInputType.emailAddress,
-                    validator: Validators.email,
-                    textCapitalization: TextCapitalization.none,
-                  ),
-                  const SizedBox(height: 32),
-                  CustomButton(
-                    text: 'Send Reset Link',
-                    onPressed: _handleSendResetLink,
-                    isLoading: _isLoading,
-                    type: ButtonType.primary,
-                  ),
-                ],
-              ),
-            ),
-          ] else ...[
-            // Email Sent Actions
-            Column(
+          // Email Form
+          Form(
+            key: _formKey,
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                CustomTextField(
+                  controller: _emailController,
+                  hintText: 'Email Address',
+                  prefixIcon: Icons.email_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                  validator: Validators.email,
+                  textCapitalization: TextCapitalization.none,
+                  enabled: !_isLoading,
+                ),
+
+                const SizedBox(height: 32),
+
+                // Send Code Button
                 CustomButton(
-                  text: 'Open Email App',
-                  onPressed: _handleOpenEmailApp,
+                  text: 'Send Verification Code',
+                  onPressed: _isLoading ? null : _handleSendResetCode,
+                  isLoading: _isLoading,
                   type: ButtonType.primary,
                 ),
-                const SizedBox(height: 16),
-                CustomButton(
-                  text: 'Resend Email',
-                  onPressed: _handleResendEmail,
-                  type: ButtonType.secondary,
-                  isLoading: _isLoading,
+
+                const SizedBox(height: 24),
+
+                // Info Message
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.info.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.info.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: AppColors.info,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'You\'ll receive a 6-digit verification code that expires in 5 minutes.',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.info,
+                                    height: 1.4,
+                                  ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
-          ],
+          ),
 
           const SizedBox(height: 40),
 
@@ -199,15 +219,16 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
               Icon(
                 Icons.arrow_back_ios,
                 size: 16,
-                color: AppColors.primary,
+                color: _isLoading ? AppColors.grey400 : AppColors.primary,
               ),
               const SizedBox(width: 4),
               GestureDetector(
-                onTap: () => context.go('/sign-in'),
+                onTap: _isLoading ? null : () => context.go('/sign-in'),
                 child: Text(
                   'Back to Sign In',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.primary,
+                        color:
+                            _isLoading ? AppColors.grey400 : AppColors.primary,
                         fontWeight: FontWeight.w600,
                       ),
                 ),
@@ -221,61 +242,39 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
     );
   }
 
-  void _handleSendResetLink() async {
+  // ✅ UPDATED: Send OTP instead of email link
+  void _handleSendResetCode() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
 
       try {
-        // Mock sending reset email
-        await Future.delayed(const Duration(seconds: 2));
+        final email = _emailController.text.trim();
+        final authService = ref.read(authServiceProvider);
 
-        if (mounted) {
-          setState(() {
-            _emailSent = true;
-            _isLoading = false;
+        final result = await authService.sendPasswordResetOTP(email: email);
+
+        if (result.isSuccess) {
+          // Navigate to OTP verification screen
+          context.push('/otp-verification', extra: {
+            'email': email,
+            'otpType': 'password_reset',
           });
 
-          _showSuccessSnackbar('Password reset link sent successfully!');
+          _showSuccessSnackbar('Verification code sent to your email!');
+        } else {
+          _showErrorSnackbar(result.message);
         }
-      } catch (error) {
+      } catch (e) {
+        _showErrorSnackbar(
+            'Failed to send verification code. Please try again.');
+      } finally {
         if (mounted) {
           setState(() {
             _isLoading = false;
           });
-          _showErrorSnackbar('Failed to send reset link. Please try again.');
         }
-      }
-    }
-  }
-
-  void _handleOpenEmailApp() {
-    // In a real app, this would open the default email app
-    _showInfoSnackbar('This would open your email app');
-  }
-
-  void _handleResendEmail() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      // Mock resending email
-      await Future.delayed(const Duration(seconds: 1));
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        _showSuccessSnackbar('Password reset link sent again!');
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        _showErrorSnackbar('Failed to resend link. Please try again.');
       }
     }
   }
@@ -298,19 +297,6 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen>
       SnackBar(
         content: Text(message),
         backgroundColor: AppColors.error,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-    );
-  }
-
-  void _showInfoSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.info,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),

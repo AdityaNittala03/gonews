@@ -1,4 +1,4 @@
-// frontend/lib/features/auth/presentation/screens/sign_up_screen.dart
+// lib/features/auth/presentation/screens/sign_up_screen.dart - UPDATED WITH OTP FLOW
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +9,7 @@ import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../shared/widgets/common/custom_text_field.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
-import '../../../../services/auth_service.dart'; // NEW: Import real auth service
+import '../../../../services/auth_service.dart';
 
 class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({Key? key}) : super(key: key);
@@ -27,6 +27,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
   bool _isPasswordVisible = false;
   bool _acceptTerms = false;
+  bool _isLoading = false;
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -58,8 +59,6 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     ));
 
     _animationController.forward();
-
-    // ✅ REMOVED: ref.listen from initState() - moved to build()
   }
 
   @override
@@ -73,30 +72,6 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
   @override
   Widget build(BuildContext context) {
-    // ✅ MOVED: ref.listen to build method
-    ref.listen<AuthState>(authStateProvider, (previous, next) {
-      if (!mounted) return;
-
-      switch (next) {
-        case Authenticated():
-          _showSuccessSnackbar(AppConstants.signupSuccess);
-          context.go('/home');
-          break;
-        case Error():
-          _showErrorSnackbar(next.message);
-          break;
-        case Loading():
-          // Loading state is handled by watching the provider
-          break;
-        default:
-          break;
-      }
-    });
-
-    // NEW: Watch authentication state
-    final authState = ref.watch(authStateProvider);
-    final isLoading = authState is Loading;
-
     return Scaffold(
       backgroundColor: AppColors.getBackgroundColor(context),
       body: SafeArea(
@@ -107,7 +82,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
               opacity: _fadeAnimation,
               child: SlideTransition(
                 position: _slideAnimation,
-                child: _buildSignUpContent(isLoading),
+                child: _buildSignUpContent(),
               ),
             );
           },
@@ -116,7 +91,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     );
   }
 
-  Widget _buildSignUpContent(bool isLoading) {
+  Widget _buildSignUpContent() {
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -129,7 +104,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               GestureDetector(
-                onTap: isLoading ? null : () => context.pop(),
+                onTap: _isLoading ? null : () => context.pop(),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -140,13 +115,13 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                   child: Icon(
                     Icons.arrow_back_ios_new,
                     color:
-                        isLoading ? AppColors.grey400 : AppColors.textPrimary,
+                        _isLoading ? AppColors.grey400 : AppColors.textPrimary,
                     size: 18,
                   ),
                 ),
               ),
               GestureDetector(
-                onTap: isLoading ? null : () => context.pop(),
+                onTap: _isLoading ? null : () => context.pop(),
                 child: Container(
                   width: 40,
                   height: 40,
@@ -157,7 +132,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                   child: Icon(
                     Icons.close,
                     color:
-                        isLoading ? AppColors.grey400 : AppColors.textPrimary,
+                        _isLoading ? AppColors.grey400 : AppColors.textPrimary,
                     size: 20,
                   ),
                 ),
@@ -177,6 +152,17 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
             textAlign: TextAlign.center,
           ),
 
+          const SizedBox(height: 8),
+
+          // Subtitle
+          Text(
+            'Join GoNews to stay updated with India\'s latest news',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+            textAlign: TextAlign.center,
+          ),
+
           const SizedBox(height: 48),
 
           // Sign Up Form
@@ -188,12 +174,12 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                 // Name Field
                 CustomTextField(
                   controller: _nameController,
-                  hintText: 'Name',
+                  hintText: 'Full Name',
                   prefixIcon: Icons.person_outline,
                   keyboardType: TextInputType.name,
                   textCapitalization: TextCapitalization.words,
                   validator: Validators.name,
-                  enabled: !isLoading, // NEW: Disable during loading
+                  enabled: !_isLoading,
                 ),
 
                 const SizedBox(height: 16),
@@ -201,12 +187,12 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                 // Email Field
                 CustomTextField(
                   controller: _emailController,
-                  hintText: 'Email',
+                  hintText: 'Email Address',
                   prefixIcon: Icons.email_outlined,
                   keyboardType: TextInputType.emailAddress,
                   validator: Validators.email,
                   textCapitalization: TextCapitalization.none,
-                  enabled: !isLoading, // NEW: Disable during loading
+                  enabled: !_isLoading,
                 ),
 
                 const SizedBox(height: 16),
@@ -218,7 +204,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                   prefixIcon: Icons.lock_outline,
                   obscureText: !_isPasswordVisible,
                   validator: Validators.strongPassword,
-                  enabled: !isLoading, // NEW: Disable during loading
+                  enabled: !_isLoading,
                   suffixIcon: IconButton(
                     icon: Icon(
                       _isPasswordVisible
@@ -226,7 +212,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                           : Icons.visibility_outlined,
                       color: AppColors.textSecondary,
                     ),
-                    onPressed: isLoading
+                    onPressed: _isLoading
                         ? null
                         : () {
                             setState(() {
@@ -276,7 +262,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                       width: 20,
                       child: Checkbox(
                         value: _acceptTerms,
-                        onChanged: isLoading
+                        onChanged: _isLoading
                             ? null
                             : (value) {
                                 setState(() {
@@ -306,7 +292,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                                   .textTheme
                                   .bodySmall
                                   ?.copyWith(
-                                    color: isLoading
+                                    color: _isLoading
                                         ? AppColors.grey400
                                         : AppColors.primary,
                                     fontWeight: FontWeight.w600,
@@ -320,7 +306,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                                   .textTheme
                                   .bodySmall
                                   ?.copyWith(
-                                    color: isLoading
+                                    color: _isLoading
                                         ? AppColors.grey400
                                         : AppColors.primary,
                                     fontWeight: FontWeight.w600,
@@ -338,11 +324,43 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
                 // Sign Up Button
                 CustomButton(
-                  text: 'Sign Up',
+                  text: 'Continue with Email Verification',
                   onPressed:
-                      (_acceptTerms && !isLoading) ? _handleSignUp : null,
-                  isLoading: isLoading, // NEW: Show loading state
+                      (_acceptTerms && !_isLoading) ? _handleSignUp : null,
+                  isLoading: _isLoading,
                   type: ButtonType.primary,
+                ),
+
+                const SizedBox(height: 24),
+
+                // Info Message
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.info.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.info.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        color: AppColors.info,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'We\'ll send a verification code to your email to secure your account.',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.info,
+                                    height: 1.4,
+                                  ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
 
                 const SizedBox(height: 32),
@@ -377,10 +395,10 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
                 const SizedBox(height: 24),
 
-                // Google Sign Up Button (✅ FIXED: Removed missing asset)
+                // Google Sign Up Button
                 CustomButton(
                   text: 'Sign Up with Google',
-                  onPressed: isLoading ? null : _handleGoogleSignUp,
+                  onPressed: _isLoading ? null : _handleGoogleSignUp,
                   type: ButtonType.outline,
                   prefixIcon: const Icon(
                     Icons.g_mobiledata,
@@ -402,11 +420,11 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
                           ),
                     ),
                     GestureDetector(
-                      onTap: isLoading ? null : () => context.pop(),
+                      onTap: _isLoading ? null : () => context.pop(),
                       child: Text(
                         'Sign In',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: isLoading
+                              color: _isLoading
                                   ? AppColors.grey400
                                   : AppColors.primary,
                               fontWeight: FontWeight.w600,
@@ -447,20 +465,47 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     );
   }
 
-  // NEW: Updated to use real authentication service
+  // ✅ UPDATED: New OTP-based registration flow
   void _handleSignUp() async {
     if (_formKey.currentState!.validate() && _acceptTerms) {
-      final name = _nameController.text.trim();
-      final email = _emailController.text.trim();
-      final password = _passwordController.text;
+      setState(() {
+        _isLoading = true;
+      });
 
-      // Use the real authentication service
-      final authNotifier = ref.read(authStateProvider.notifier);
-      await authNotifier.register(
-        name: name,
-        email: email,
-        password: password,
-      );
+      try {
+        final name = _nameController.text.trim();
+        final email = _emailController.text.trim();
+        final password = _passwordController.text;
+
+        final authNotifier = ref.read(authStateProvider.notifier);
+        final result = await authNotifier.startRegistration(
+          name: name,
+          email: email,
+          password: password,
+        );
+
+        if (result.isSuccess) {
+          // Navigate to OTP verification screen
+          context.push('/otp-verification', extra: {
+            'email': email,
+            'otpType': 'registration',
+            'name': name,
+            'password': password,
+          });
+
+          _showSuccessSnackbar('Verification code sent to your email!');
+        } else {
+          _showErrorSnackbar(result.message);
+        }
+      } catch (e) {
+        _showErrorSnackbar('Registration failed. Please try again.');
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     } else if (!_acceptTerms) {
       _showErrorSnackbar(
           'Please accept the Terms of Service and Privacy Policy');

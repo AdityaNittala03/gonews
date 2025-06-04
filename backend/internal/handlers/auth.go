@@ -1,5 +1,3 @@
-//internal/handlers/auth.go
-
 package handlers
 
 import (
@@ -17,19 +15,29 @@ import (
 
 // AuthHandler handles authentication HTTP requests
 type AuthHandler struct {
-	authService *services.AuthService
-	validator   *validator.Validate
+	authService  *services.AuthService
+	otpService   *services.OTPService
+	emailService *services.EmailService
+	userRepo     *repository.UserRepository
+	validator    *validator.Validate
 }
 
 // NewAuthHandler creates a new authentication handler
-func NewAuthHandler(authService *services.AuthService) *AuthHandler {
+func NewAuthHandler(authService *services.AuthService, otpService *services.OTPService, emailService *services.EmailService, userRepo *repository.UserRepository) *AuthHandler {
 	return &AuthHandler{
-		authService: authService,
-		validator:   validator.New(),
+		authService:  authService,
+		otpService:   otpService,
+		emailService: emailService,
+		userRepo:     userRepo,
+		validator:    validator.New(),
 	}
 }
 
-// Register handles user registration
+// ====================================
+// NEW OTP-BASED REGISTRATION FLOW
+// ====================================
+
+// Register handles initial user registration with OTP verification
 // POST /api/v1/auth/register
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	var req models.RegisterRequest
@@ -55,8 +63,138 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
 
-	// Register user
-	response, err := h.authService.Register(&req)
+	// Check if user already exists
+	existingUser, _ := h.userRepo.GetUserByEmail(req.Email)
+	if existingUser != nil {
+		return c.Status(fiber.StatusConflict).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User with this email already exists",
+		})
+	}
+
+	// Generate and send OTP
+	otpCode, err := h.otpService.GenerateOTP(req.Email, models.OTPTypeRegistration)
+	if err != nil {
+		if errors.Is(err, services.ErrOTPRateLimit) {
+			return c.Status(fiber.StatusTooManyRequests).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Too many OTP requests. Please try again later",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to generate OTP",
+		})
+	}
+
+	// Send OTP email
+	err = h.emailService.SendOTPEmail(req.Email, req.Name, otpCode, models.OTPTypeRegistration)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to send OTP email",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "OTP sent successfully to your email",
+		Data: map[string]interface{}{
+			"email":      req.Email,
+			"otp_type":   models.OTPTypeRegistration,
+			"expires_in": 300, // 5 minutes
+		},
+	})
+}
+
+// VerifyRegistrationOTP handles OTP verification for registration
+// POST /api/v1/auth/verify-registration-otp
+func (h *AuthHandler) VerifyRegistrationOTP(c *fiber.Ctx) error {
+	var req models.VerifyOTPRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Verify OTP
+	valid, err := h.otpService.VerifyOTP(req.Email, req.Code, models.OTPTypeRegistration)
+	if err != nil {
+		if errors.Is(err, repository.ErrOTPNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Invalid or expired OTP code",
+			})
+		}
+		if errors.Is(err, repository.ErrOTPExpired) {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "OTP code has expired. Please request a new one",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to verify OTP",
+		})
+	}
+
+	if !valid {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid OTP code",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "OTP verified successfully",
+		Data: map[string]interface{}{
+			"email":    req.Email,
+			"verified": true,
+		},
+	})
+}
+
+// CompleteRegistration handles final registration after OTP verification
+// POST /api/v1/auth/complete-registration
+func (h *AuthHandler) CompleteRegistration(c *fiber.Ctx) error {
+	var req models.CompleteRegistrationRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	// Create user account
+	registerReq := &models.RegisterRequest{
+		Email:    req.Email,
+		Password: req.Password,
+		Name:     req.Name,
+	}
+
+	response, err := h.authService.Register(registerReq)
 	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrUserAlreadyExists):
@@ -65,11 +203,6 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 				Message: "User with this email already exists",
 			})
 		case strings.Contains(err.Error(), "password"):
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
-				Error:   true,
-				Message: err.Error(),
-			})
-		case strings.Contains(err.Error(), "email"):
 			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
 				Error:   true,
 				Message: err.Error(),
@@ -84,10 +217,274 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusCreated).JSON(models.SuccessResponse{
 		Success: true,
-		Message: "User registered successfully",
+		Message: "Registration completed successfully",
 		Data:    response,
 	})
 }
+
+// ====================================
+// OTP-BASED PASSWORD RESET FLOW
+// ====================================
+
+// SendPasswordResetOTP handles password reset OTP generation
+// POST /api/v1/auth/forgot-password
+func (h *AuthHandler) SendPasswordResetOTP(c *fiber.Ctx) error {
+	var req models.SendOTPRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Check if user exists
+	user, err := h.userRepo.GetUserByEmail(req.Email)
+	if err != nil {
+		// Don't reveal if email exists or not for security
+		return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+			Success: true,
+			Message: "If an account with this email exists, you will receive a password reset OTP",
+		})
+	}
+
+	// Generate and send OTP
+	otpCode, err := h.otpService.GenerateOTP(req.Email, models.OTPTypePasswordReset)
+	if err != nil {
+		if errors.Is(err, services.ErrOTPRateLimit) {
+			return c.Status(fiber.StatusTooManyRequests).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Too many password reset requests. Please try again later",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to generate password reset OTP",
+		})
+	}
+
+	// Send OTP email
+	err = h.emailService.SendOTPEmail(req.Email, user.Name, otpCode, models.OTPTypePasswordReset)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to send password reset email",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Password reset OTP sent to your email",
+		Data: map[string]interface{}{
+			"email":      req.Email,
+			"otp_type":   models.OTPTypePasswordReset,
+			"expires_in": 300, // 5 minutes
+		},
+	})
+}
+
+// VerifyPasswordResetOTP handles OTP verification for password reset
+// POST /api/v1/auth/verify-password-reset-otp
+func (h *AuthHandler) VerifyPasswordResetOTP(c *fiber.Ctx) error {
+	var req models.VerifyOTPRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Verify OTP
+	valid, err := h.otpService.VerifyOTP(req.Email, req.Code, models.OTPTypePasswordReset)
+	if err != nil {
+		if errors.Is(err, repository.ErrOTPNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Invalid or expired OTP code",
+			})
+		}
+		if errors.Is(err, repository.ErrOTPExpired) {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "OTP code has expired. Please request a new one",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to verify OTP",
+		})
+	}
+
+	if !valid {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid OTP code",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "OTP verified successfully",
+		Data: map[string]interface{}{
+			"email":       req.Email,
+			"verified":    true,
+			"can_reset":   true,
+			"reset_token": req.Code, // Use OTP as temporary reset token
+		},
+	})
+}
+
+// ResetPassword handles password reset after OTP verification
+// POST /api/v1/auth/reset-password
+func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
+	var req models.ResetPasswordRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Verify OTP one more time for security
+	valid, err := h.otpService.VerifyOTP(req.Email, req.ResetToken, models.OTPTypePasswordReset)
+	if err != nil || !valid {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid or expired reset token",
+		})
+	}
+
+	// Get user
+	user, err := h.userRepo.GetUserByEmail(req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User not found",
+		})
+	}
+
+	// Reset password using auth service
+	err = h.authService.ChangePassword(user.ID, "", req.NewPassword) // Use empty string for current password in reset
+	if err != nil {
+		if strings.Contains(err.Error(), "password") {
+			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: err.Error(),
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to reset password",
+		})
+	}
+
+	// Invalidate the OTP
+	h.otpService.InvalidateOTP(req.Email, models.OTPTypePasswordReset)
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Password reset successfully",
+	})
+}
+
+// ResendOTP handles OTP resend requests
+// POST /api/v1/auth/resend-otp
+func (h *AuthHandler) ResendOTP(c *fiber.Ctx) error {
+	var req models.ResendOTPRequest
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Generate new OTP
+	otpCode, err := h.otpService.GenerateOTP(req.Email, req.OTPType)
+	if err != nil {
+		if errors.Is(err, services.ErrOTPRateLimit) {
+			return c.Status(fiber.StatusTooManyRequests).JSON(models.ErrorResponse{
+				Error:   true,
+				Message: "Too many OTP requests. Please try again later",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to generate OTP",
+		})
+	}
+
+	// Get user name for email
+	userName := "User"
+	if user, err := h.userRepo.GetUserByEmail(req.Email); err == nil {
+		userName = user.Name
+	}
+
+	// Send OTP email
+	err = h.emailService.SendOTPEmail(req.Email, userName, otpCode, req.OTPType)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to send OTP email",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "OTP resent successfully",
+		Data: map[string]interface{}{
+			"email":      req.Email,
+			"otp_type":   req.OTPType,
+			"expires_in": 300, // 5 minutes
+		},
+	})
+}
+
+// ====================================
+// EXISTING METHODS (PRESERVED)
+// ====================================
 
 // Login handles user authentication
 // POST /api/v1/auth/login

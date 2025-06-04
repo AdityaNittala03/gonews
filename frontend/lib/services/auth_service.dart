@@ -1,4 +1,4 @@
-// lib/services/auth_service.dart
+// lib/services/auth_service.dart - COMPLETE REWRITE WITH OTP INTEGRATION
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
@@ -7,6 +7,10 @@ import '../core/network/api_client.dart';
 import '../core/network/api_endpoints.dart';
 import '../core/adapters/backend_adapters.dart';
 import 'token_service.dart';
+
+// ===============================
+// PROVIDERS
+// ===============================
 
 // Auth Service Provider
 final authServiceProvider = Provider<AuthService>((ref) {
@@ -22,6 +26,10 @@ final authStateProvider =
   return AuthStateNotifier(authService);
 });
 
+// ===============================
+// AUTH SERVICE CLASS
+// ===============================
+
 class AuthService {
   final ApiClient _apiClient;
   final TokenService _tokenService;
@@ -29,34 +37,89 @@ class AuthService {
   AuthService(this._apiClient, this._tokenService);
 
   // ===============================
-  // AUTHENTICATION METHODS
+  // OTP METHODS (NEW)
   // ===============================
 
-  /// Register new user
-  Future<AuthResult> register({
+  /// Step 1: Send Registration OTP
+  Future<AuthResult> sendRegistrationOTP({
     required String name,
     required String email,
     required String password,
-    String? phone,
-    String? location,
   }) async {
     try {
       final response = await _apiClient.post(
-        ApiEndpoints.register,
+        '/auth/register',
         data: {
           'name': name,
           'email': email,
           'password': password,
-          if (phone != null) 'phone': phone,
-          if (location != null) 'location': location,
         },
         parser: (data) => data,
       );
 
       if (response.isSuccess) {
         final responseData = response.data as Map<String, dynamic>;
+        return AuthResult.success(
+          message: responseData['message'] ?? 'OTP sent successfully',
+          data: responseData['data'],
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(message: 'Failed to send OTP: ${e.toString()}');
+    }
+  }
 
-        // ✅ FIXED: Handle your backend's nested response structure
+  /// Step 2: Verify Registration OTP
+  Future<AuthResult> verifyRegistrationOTP({
+    required String email,
+    required String code,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/auth/verify-registration-otp',
+        data: {
+          'email': email,
+          'code': code,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        return AuthResult.success(
+          message: responseData['message'] ?? 'OTP verified successfully',
+          data: responseData['data'],
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(
+          message: 'OTP verification failed: ${e.toString()}');
+    }
+  }
+
+  /// Step 3: Complete Registration
+  Future<AuthResult> completeRegistration({
+    required String email,
+    required String name,
+    required String password,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/auth/complete-registration',
+        data: {
+          'email': email,
+          'name': name,
+          'password': password,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
         final data = responseData['data'] as Map<String, dynamic>;
 
         // Store tokens from nested data
@@ -73,7 +136,8 @@ class AuthService {
         }
 
         return AuthResult.success(
-          message: responseData['message'] ?? 'Account created successfully!',
+          message:
+              responseData['message'] ?? 'Registration completed successfully!',
           user: data['user'] != null
               ? BackendAdapters.userFromBackend(data['user'])
               : null,
@@ -82,8 +146,147 @@ class AuthService {
         return AuthResult.error(message: response.message);
       }
     } catch (e) {
-      return AuthResult.error(message: 'Registration failed: ${e.toString()}');
+      return AuthResult.error(
+          message: 'Registration completion failed: ${e.toString()}');
     }
+  }
+
+  /// Send Password Reset OTP
+  Future<AuthResult> sendPasswordResetOTP({
+    required String email,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/auth/forgot-password',
+        data: {
+          'email': email,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        return AuthResult.success(
+          message: responseData['message'] ?? 'Password reset OTP sent',
+          data: responseData['data'],
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(
+          message: 'Failed to send reset OTP: ${e.toString()}');
+    }
+  }
+
+  /// Verify Password Reset OTP
+  Future<AuthResult> verifyPasswordResetOTP({
+    required String email,
+    required String code,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/auth/verify-password-reset-otp',
+        data: {
+          'email': email,
+          'code': code,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        return AuthResult.success(
+          message: responseData['message'] ?? 'OTP verified successfully',
+          data: responseData['data'],
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(
+          message: 'OTP verification failed: ${e.toString()}');
+    }
+  }
+
+  /// Reset Password
+  Future<AuthResult> resetPassword({
+    required String email,
+    required String resetToken,
+    required String newPassword,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/auth/reset-password',
+        data: {
+          'email': email,
+          'reset_token': resetToken,
+          'new_password': newPassword,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        return AuthResult.success(
+          message: responseData['message'] ?? 'Password reset successfully',
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(
+          message: 'Password reset failed: ${e.toString()}');
+    }
+  }
+
+  /// Resend OTP
+  Future<AuthResult> resendOTP({
+    required String email,
+    required String otpType,
+  }) async {
+    try {
+      final response = await _apiClient.post(
+        '/auth/resend-otp',
+        data: {
+          'email': email,
+          'otp_type': otpType,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        return AuthResult.success(
+          message: responseData['message'] ?? 'OTP resent successfully',
+          data: responseData['data'],
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(message: 'Failed to resend OTP: ${e.toString()}');
+    }
+  }
+
+  // ===============================
+  // STANDARD AUTHENTICATION METHODS
+  // ===============================
+
+  /// Register new user (LEGACY - now redirects to OTP flow)
+  Future<AuthResult> register({
+    required String name,
+    required String email,
+    required String password,
+    String? phone,
+    String? location,
+  }) async {
+    // Redirect to OTP-based registration
+    return await sendRegistrationOTP(
+      name: name,
+      email: email,
+      password: password,
+    );
   }
 
   /// Login user
@@ -105,8 +308,6 @@ class AuthService {
 
       if (response.isSuccess) {
         final responseData = response.data as Map<String, dynamic>;
-
-        // ✅ FIXED: Handle your backend's nested response structure
         final data = responseData['data'] as Map<String, dynamic>;
 
         // Store tokens from nested data
@@ -162,7 +363,10 @@ class AuthService {
       );
 
       if (response.isSuccess) {
-        final userData = BackendAdapters.userFromBackend(response.data);
+        final responseData = response.data as Map<String, dynamic>;
+        final data = responseData['data'] as Map<String, dynamic>;
+
+        final userData = BackendAdapters.userFromBackend(data);
         await _tokenService.storeUserData(userData);
 
         return AuthResult.success(
@@ -240,7 +444,7 @@ class AuthService {
 }
 
 // ===============================
-// AUTH STATE MANAGEMENT
+// AUTH STATE NOTIFIER (UPDATED WITH OTP)
 // ===============================
 
 class AuthStateNotifier extends StateNotifier<AuthState> {
@@ -270,6 +474,59 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  // ===============================
+  // OTP REGISTRATION FLOW (NEW)
+  // ===============================
+
+  /// ✅ FIXED: Step 1 - Start Registration (Send OTP)
+  Future<AuthResult> startRegistration({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    state = const AuthState.loading();
+
+    final result = await _authService.sendRegistrationOTP(
+      name: name,
+      email: email,
+      password: password,
+    );
+
+    if (result.isError) {
+      state = AuthState.error(result.message);
+    } else {
+      // Don't change state here - let the OTP screen handle it
+      state = const AuthState.unauthenticated();
+    }
+
+    return result;
+  }
+
+  /// ✅ FIXED: Step 3 - Complete Registration (after OTP verification)
+  Future<void> completeRegistration({
+    required String email,
+    required String name,
+    required String password,
+  }) async {
+    state = const AuthState.loading();
+
+    final result = await _authService.completeRegistration(
+      email: email,
+      name: name,
+      password: password,
+    );
+
+    if (result.isSuccess) {
+      state = AuthState.authenticated(result.user!);
+    } else {
+      state = AuthState.error(result.message);
+    }
+  }
+
+  // ===============================
+  // STANDARD AUTH METHODS
+  // ===============================
+
   Future<void> login(String email, String password) async {
     state = const AuthState.loading();
 
@@ -281,6 +538,7 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  /// Legacy register method (now uses OTP flow)
   Future<void> register({
     required String name,
     required String email,
@@ -288,21 +546,12 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     String? phone,
     String? location,
   }) async {
-    state = const AuthState.loading();
-
-    final result = await _authService.register(
+    // Redirect to new OTP flow
+    await startRegistration(
       name: name,
       email: email,
       password: password,
-      phone: phone,
-      location: location,
     );
-
-    if (result.isSuccess) {
-      state = AuthState.authenticated(result.user!);
-    } else {
-      state = AuthState.error(result.message);
-    }
   }
 
   Future<void> logout() async {

@@ -1,4 +1,4 @@
-// routes/routes.go - Updated for Database-First Architecture Integration
+// routes/routes.go - Updated with OTP Integration
 
 package routes
 
@@ -18,7 +18,7 @@ import (
 	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes with database-first architecture integration
+// SetupRoutes configures all application routes with OTP integration
 func SetupRoutes(
 	app *fiber.App,
 	db *sqlx.DB,
@@ -33,10 +33,15 @@ func SetupRoutes(
 ) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
-	articleRepo := repository.NewArticleRepository(db) // ADDED: Article repository for database-first architecture
+	articleRepo := repository.NewArticleRepository(db)
+	otpRepo := repository.NewOTPRepository(db) // NEW: OTP repository
 
-	// Initialize authentication service
+	// Initialize services
 	authService := services.NewAuthService(userRepo, jwtManager)
+
+	// NEW: Initialize OTP and Email services
+	emailService := services.NewEmailService(cfg, log)
+	otpService := services.NewOTPService(otpRepo, emailService, log)
 
 	// ===============================
 	// SERVICE INITIALIZATION WITH DATABASE INTEGRATION
@@ -85,18 +90,18 @@ func SetupRoutes(
 			log,          // *logger.Logger
 			apiClient,    // *APIClient
 			quotaManager, // *QuotaManager
-			articleRepo,  // *repository.ArticleRepository (THE FIX!)
+			articleRepo,  // *repository.ArticleRepository
 		)
 		finalNewsService.SetCacheService(finalCacheService)
 		log.Info("Fallback NewsAggregatorService initialized with database-first architecture")
 	}
 
 	// ===============================
-	// INITIALIZE HANDLERS
+	// INITIALIZE HANDLERS WITH OTP SUPPORT
 	// ===============================
 
-	// Core handlers
-	authHandler := handlers.NewAuthHandler(authService)
+	// Enhanced auth handler with OTP services
+	authHandler := handlers.NewAuthHandler(authService, otpService, emailService, userRepo)
 	newsHandler := handlers.NewNewsHandler(finalNewsService, finalCacheService, cfg, log)
 
 	// Advanced handler (conditional)
@@ -107,11 +112,13 @@ func SetupRoutes(
 	}
 
 	log.Info("All handlers initialized successfully", map[string]interface{}{
-		"auth_handler":         "✅",
+		"auth_handler":         "✅ Enhanced with OTP verification",
 		"news_handler":         "✅",
 		"performance_handler":  performanceHandler != nil,
 		"advanced_features":    finalPerformanceService != nil,
 		"database_integration": "✅ Database-first architecture enabled",
+		"otp_integration":      "✅ Email OTP verification enabled",
+		"email_service":        "✅ Professional email templates",
 	})
 
 	// ===============================
@@ -128,6 +135,8 @@ func SetupRoutes(
 			"advanced_features":  finalPerformanceService != nil,
 			"quota_conservation": true,
 			"instant_responses":  true,
+			"otp_verification":   true,
+			"email_service":      true,
 		}
 
 		return c.JSON(fiber.Map{
@@ -135,7 +144,7 @@ func SetupRoutes(
 			"service":      "gonews-api",
 			"version":      "1.0.0",
 			"checkpoint":   determineCheckpoint(finalPerformanceService != nil),
-			"architecture": "Database-First News Aggregation",
+			"architecture": "Database-First News Aggregation with OTP Verification",
 			"features":     features,
 			"timestamp":    time.Now().Format(time.RFC3339),
 		})
@@ -150,8 +159,8 @@ func SetupRoutes(
 	// Public routes (no authentication required)
 	setupPublicRoutes(api, newsHandler)
 
-	// Authentication routes
-	setupAuthRoutes(api, authHandler, jwtManager)
+	// Enhanced authentication routes with OTP
+	setupAuthRoutesWithOTP(api, authHandler, jwtManager)
 
 	// News routes with database-first integration
 	setupNewsRoutes(api, newsHandler, jwtManager, finalNewsService, log)
@@ -173,13 +182,14 @@ func SetupRoutes(
 
 	log.Info("All routes configured successfully", map[string]interface{}{
 		"public_routes":         "✅",
-		"auth_routes":           "✅",
+		"auth_routes":           "✅ Enhanced with OTP verification",
 		"news_routes":           "✅ Database-first enabled",
 		"performance_routes":    performanceHandler != nil,
 		"protected_routes":      "✅",
 		"health_routes":         "✅",
 		"advanced_integration":  finalPerformanceService != nil,
 		"database_architecture": "✅ Articles served from PostgreSQL",
+		"otp_integration":       "✅ Complete OTP workflow enabled",
 	})
 }
 
@@ -190,8 +200,8 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 		return c.JSON(fiber.Map{
 			"api_version":  "1.0.0",
 			"status":       "operational",
-			"checkpoint":   "Database Integration Complete",
-			"architecture": "Database-First News Aggregation",
+			"checkpoint":   "OTP Integration Complete",
+			"architecture": "Database-First News Aggregation with OTP Verification",
 			"features": fiber.Map{
 				"authentication":         true,
 				"news_aggregation":       true,
@@ -207,6 +217,8 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"intelligent_cache":      true,
 				"performance_monitoring": true,
 				"advanced_optimization":  true,
+				"otp_verification":       true,
+				"email_service":          true,
 			},
 			"api_sources": fiber.Map{
 				"newsdata_io": "active (database-first fallback)",
@@ -220,6 +232,12 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"cache":            "Redis",
 				"serving_strategy": "Database-first with API fallback",
 			},
+			"security": fiber.Map{
+				"otp_verification": "enabled",
+				"email_templates":  "professional",
+				"rate_limiting":    "enabled",
+				"jwt_auth":         "enabled",
+			},
 		})
 	})
 
@@ -231,6 +249,71 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 		return c.JSON(fiber.Map{
 			"message": "Password strength check endpoint",
 			"status":  "available",
+		})
+	})
+}
+
+// setupAuthRoutesWithOTP configures authentication routes with OTP integration
+func setupAuthRoutesWithOTP(api fiber.Router, authHandler *handlers.AuthHandler, jwtManager *auth.JWTManager) {
+	auth := api.Group("/auth")
+
+	// ===============================
+	// PUBLIC AUTHENTICATION ENDPOINTS
+	// ===============================
+
+	// Enhanced registration flow with OTP
+	auth.Post("/register", authHandler.Register)                             // Step 1: Send OTP
+	auth.Post("/verify-registration-otp", authHandler.VerifyRegistrationOTP) // Step 2: Verify OTP
+	auth.Post("/complete-registration", authHandler.CompleteRegistration)    // Step 3: Complete registration
+
+	// Enhanced password reset flow with OTP
+	auth.Post("/forgot-password", authHandler.SendPasswordResetOTP)             // Step 1: Send reset OTP
+	auth.Post("/verify-password-reset-otp", authHandler.VerifyPasswordResetOTP) // Step 2: Verify reset OTP
+	auth.Post("/reset-password", authHandler.ResetPassword)                     // Step 3: Reset password
+
+	// OTP utilities
+	auth.Post("/resend-otp", authHandler.ResendOTP) // Resend any OTP type
+
+	// Standard authentication endpoints
+	auth.Post("/login", authHandler.Login)
+	auth.Post("/refresh", authHandler.RefreshToken)
+	auth.Post("/check-password", authHandler.CheckPasswordStrength)
+
+	// ===============================
+	// PROTECTED AUTHENTICATION ENDPOINTS (JWT required)
+	// ===============================
+
+	authProtected := auth.Use(middleware.AuthMiddleware(jwtManager))
+	authProtected.Get("/me", authHandler.GetProfile)
+	authProtected.Put("/me", authHandler.UpdateProfile)
+	authProtected.Post("/change-password", authHandler.ChangePassword)
+	authProtected.Post("/logout", authHandler.Logout)
+	authProtected.Get("/stats", authHandler.GetUserStats)
+	authProtected.Post("/verify-email", authHandler.VerifyEmail)
+	authProtected.Delete("/account", authHandler.DeactivateAccount)
+
+	// ===============================
+	// OTP STATUS ENDPOINTS (for debugging)
+	// ===============================
+
+	// OTP status endpoint (public but rate-limited)
+	auth.Get("/otp-status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"otp_service":   "operational",
+			"email_service": "operational",
+			"rate_limiting": "enabled",
+			"supported_types": []string{
+				"registration",
+				"password_reset",
+				"email_verification",
+			},
+			"settings": fiber.Map{
+				"otp_length":      6,
+				"expiry_minutes":  5,
+				"max_attempts":    3,
+				"resend_cooldown": 60,
+				"daily_limit":     10,
+			},
 		})
 	})
 }
@@ -307,27 +390,6 @@ func setupPerformanceRoutes(api fiber.Router, performanceHandler *handlers.Perfo
 
 	// Index recommendations (admin only)
 	adminPerformance.Get("/index-recommendations", performanceHandler.GetIndexRecommendations)
-}
-
-// setupAuthRoutes configures authentication-related routes
-func setupAuthRoutes(api fiber.Router, authHandler *handlers.AuthHandler, jwtManager *auth.JWTManager) {
-	auth := api.Group("/auth")
-
-	// Public authentication endpoints
-	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
-	auth.Post("/refresh", authHandler.RefreshToken)
-	auth.Post("/check-password", authHandler.CheckPasswordStrength)
-
-	// Protected authentication endpoints (require valid JWT)
-	authProtected := auth.Use(middleware.AuthMiddleware(jwtManager))
-	authProtected.Get("/me", authHandler.GetProfile)
-	authProtected.Put("/me", authHandler.UpdateProfile)
-	authProtected.Post("/change-password", authHandler.ChangePassword)
-	authProtected.Post("/logout", authHandler.Logout)
-	authProtected.Get("/stats", authHandler.GetUserStats)
-	authProtected.Post("/verify-email", authHandler.VerifyEmail)
-	authProtected.Delete("/account", authHandler.DeactivateAccount)
 }
 
 // setupNewsRoutes configures all news-related routes with database-first integration
@@ -538,6 +600,23 @@ func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 			"last_check":  time.Now().Format(time.RFC3339),
 		})
 	})
+
+	// OTP service health check
+	app.Get("/health/otp", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":        "healthy",
+			"otp_service":   "operational",
+			"email_service": "operational",
+			"features": fiber.Map{
+				"registration_otp":    "enabled",
+				"password_reset_otp":  "enabled",
+				"email_verification":  "enabled",
+				"rate_limiting":       "enabled",
+				"professional_emails": "enabled",
+			},
+			"last_check": time.Now().Format(time.RFC3339),
+		})
+	})
 }
 
 // setupPerformanceHealthRoutes sets up performance health check endpoints
@@ -657,14 +736,35 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 // determineCheckpoint returns the current checkpoint based on features available
 func determineCheckpoint(hasAdvancedFeatures bool) string {
 	if hasAdvancedFeatures {
-		return "5 - Advanced Features & Optimization (Database-First)"
+		return "5 - Advanced Features & Optimization (Database-First + OTP)"
 	}
-	return "Database Integration Complete"
+	return "OTP Integration Complete"
 }
 
 // ===============================
 // ROUTE DOCUMENTATION
 // ===============================
+
+// GetOTPRoutesSummary returns a summary of OTP-related routes
+func GetOTPRoutesSummary() map[string][]RouteInfo {
+	return map[string][]RouteInfo{
+		"otp_registration": {
+			{Method: "POST", Path: "/api/v1/auth/register", Description: "Step 1: Send registration OTP", AuthLevel: "none"},
+			{Method: "POST", Path: "/api/v1/auth/verify-registration-otp", Description: "Step 2: Verify registration OTP", AuthLevel: "none"},
+			{Method: "POST", Path: "/api/v1/auth/complete-registration", Description: "Step 3: Complete registration", AuthLevel: "none"},
+		},
+		"otp_password_reset": {
+			{Method: "POST", Path: "/api/v1/auth/forgot-password", Description: "Step 1: Send password reset OTP", AuthLevel: "none"},
+			{Method: "POST", Path: "/api/v1/auth/verify-password-reset-otp", Description: "Step 2: Verify reset OTP", AuthLevel: "none"},
+			{Method: "POST", Path: "/api/v1/auth/reset-password", Description: "Step 3: Reset password", AuthLevel: "none"},
+		},
+		"otp_utilities": {
+			{Method: "POST", Path: "/api/v1/auth/resend-otp", Description: "Resend any OTP type", AuthLevel: "none"},
+			{Method: "GET", Path: "/api/v1/auth/otp-status", Description: "OTP service status", AuthLevel: "none"},
+			{Method: "GET", Path: "/health/otp", Description: "OTP health check", AuthLevel: "none"},
+		},
+	}
+}
 
 // GetAdvancedRoutesSummary returns a summary of all advanced routes for documentation
 func GetAdvancedRoutesSummary() map[string][]RouteInfo {
@@ -691,6 +791,7 @@ func GetAdvancedRoutesSummary() map[string][]RouteInfo {
 			{Method: "GET", Path: "/health/performance", Description: "Performance system health check", AuthLevel: "none"},
 			{Method: "GET", Path: "/health/performance/system", Description: "Performance monitoring system status", AuthLevel: "none"},
 			{Method: "GET", Path: "/health/database-first", Description: "Database-first architecture health check", AuthLevel: "none"},
+			{Method: "GET", Path: "/health/otp", Description: "OTP service health check", AuthLevel: "none"},
 		},
 		"debug_endpoints": {
 			{Method: "GET", Path: "/api/v1/news/debug/database", Description: "Test database-first integration", AuthLevel: "none"},

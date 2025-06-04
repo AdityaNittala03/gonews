@@ -1,5 +1,3 @@
-//internal/config/config.go
-
 package config
 
 import (
@@ -29,6 +27,14 @@ type Config struct {
 	JWTSecret          string
 	JWTExpirationHours int
 	JWTRefreshDays     int
+
+	// NEW: SMTP Configuration for OTP emails
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
+	SMTPFromName string
 
 	// External APIs - UPDATED: RapidAPI Dominant Strategy
 	// RapidAPI (PRIMARY - 15,000/day)
@@ -157,6 +163,14 @@ func Load() (*Config, error) {
 		JWTExpirationHours: getEnvAsInt("JWT_EXPIRATION_HOURS", 24),
 		JWTRefreshDays:     getEnvAsInt("JWT_REFRESH_DAYS", 7),
 
+		// NEW: SMTP Configuration for OTP emails
+		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:     getEnvAsInt("SMTP_PORT", 587),
+		SMTPUser:     getEnv("SMTP_USER", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", getEnv("SMTP_USER", "noreply@gonews.com")),
+		SMTPFromName: getEnv("SMTP_FROM_NAME", "GoNews - India ki Awaaz"),
+
 		// External APIs - CORRECTED: RapidAPI Dominant Strategy (Legacy)
 		// RapidAPI (PRIMARY - 15,000/day)
 		RapidAPIKey:         getEnv("RAPIDAPI_API_KEY", getEnv("RAPIDAPI_KEY", "")), // Support both key names
@@ -270,7 +284,28 @@ func Load() (*Config, error) {
 		log.Printf("Warning: RAPIDAPI_KEY not set")
 	}
 
+	// Validate SMTP configuration
+	if cfg.SMTPUser == "" {
+		log.Printf("Warning: SMTP_USER not set - OTP emails will not work")
+	}
+	if cfg.SMTPPassword == "" {
+		log.Printf("Warning: SMTP_PASSWORD not set - OTP emails will not work")
+	}
+
 	return cfg, nil
+}
+
+// NEW: SMTP Configuration Helpers
+func (c *Config) GetSMTPConfig() (string, int, string, string) {
+	return c.SMTPHost, c.SMTPPort, c.SMTPUser, c.SMTPPassword
+}
+
+func (c *Config) GetEmailFrom() (string, string) {
+	return c.SMTPFrom, c.SMTPFromName
+}
+
+func (c *Config) IsEmailConfigured() bool {
+	return c.SMTPUser != "" && c.SMTPPassword != ""
 }
 
 // IsProduction returns true if the environment is production
