@@ -137,6 +137,80 @@ class BackendAdapters {
     };
   }
 
+  /// Convert backend advanced search response (PostgreSQL full-text search)
+  /// FIXED: Safe type casting to prevent List<dynamic> to List<String> errors
+  static Map<String, dynamic> advancedSearchResponseFromBackend(
+      Map<String, dynamic> backendData) {
+    try {
+      // Extract articles from search results
+      final results = backendData['results'] as List<dynamic>? ?? [];
+      final articles = results.map((result) {
+        final resultData = result as Map<String, dynamic>;
+        final articleData =
+            resultData['article'] as Map<String, dynamic>? ?? {};
+
+        // Add search-specific metadata to article
+        final article = articleFromBackend(articleData);
+
+        return article;
+      }).toList();
+
+      // Extract search metrics
+      final metrics = backendData['metrics'] as Map<String, dynamic>? ?? {};
+
+      // Extract pagination
+      final pagination =
+          backendData['pagination'] as Map<String, dynamic>? ?? {};
+
+      return {
+        'articles': articles,
+        'pagination': _advancedPaginationFromBackend(pagination),
+        'query': backendData['query']?.toString() ??
+            metrics['query']?.toString() ??
+            '',
+        'total_found': metrics['total_results'] ?? 0,
+        'search_metrics': {
+          'search_time_ms': metrics['search_time_ms'] ?? 0,
+          'index_used': metrics['index_used']?.toString() ?? '',
+          'filters_applied': metrics['filters_applied'] ?? 0,
+          'avg_relevance_score':
+              (metrics['avg_relevance_score'] ?? 0.0).toDouble(),
+          'search_complexity':
+              metrics['search_complexity']?.toString() ?? 'simple',
+        },
+        // FIXED: Safe string list conversion to prevent type casting errors
+        'suggestions': _safeStringList(backendData['suggestions']),
+        'related_terms': _safeStringList(backendData['related_terms']),
+        'popular_searches': _safeStringList(backendData['popular_searches']),
+        'search_id': backendData['search_id']?.toString() ?? '',
+        'cache_hit': backendData['cache_hit'] ?? false,
+        'processing_time_ms': backendData['processing_time_ms'] ?? 0,
+      };
+    } catch (e) {
+      // Fallback for any parsing errors
+      print('🔍 Error parsing search response: $e');
+      return {
+        'articles': <Article>[],
+        'pagination': _advancedPaginationFromBackend(null),
+        'query': '',
+        'total_found': 0,
+        'search_metrics': {
+          'search_time_ms': 0,
+          'index_used': '',
+          'filters_applied': 0,
+          'avg_relevance_score': 0.0,
+          'search_complexity': 'simple',
+        },
+        'suggestions': <String>[],
+        'related_terms': <String>[],
+        'popular_searches': <String>[],
+        'search_id': '',
+        'cache_hit': false,
+        'processing_time_ms': 0,
+      };
+    }
+  }
+
   /// Convert backend bookmarks response
   static Map<String, dynamic> bookmarksFromBackend(
       Map<String, dynamic> backendData) {
@@ -167,6 +241,21 @@ class BackendAdapters {
   // ===============================
   // HELPER METHODS
   // ===============================
+
+  /// FIXED: Safe string list conversion helper
+  static List<String> _safeStringList(dynamic value) {
+    if (value == null) return <String>[];
+    if (value is List) {
+      return value
+          .map((item) => item?.toString() ?? '')
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+    if (value is String) {
+      return [value];
+    }
+    return <String>[];
+  }
 
   static String _getCategoryFromBackend(Map<String, dynamic> data) {
     // Handle both category object and category string
@@ -219,12 +308,19 @@ class BackendAdapters {
     if (tags == null) return [];
 
     if (tags is List) {
-      return tags.map((tag) => tag.toString()).toList();
+      return tags
+          .map((tag) => tag?.toString() ?? '')
+          .where((tag) => tag.isNotEmpty)
+          .toList();
     }
 
     if (tags is String) {
       // Handle comma-separated string
-      return tags.split(',').map((tag) => tag.trim()).toList();
+      return tags
+          .split(',')
+          .map((tag) => tag.trim())
+          .where((tag) => tag.isNotEmpty)
+          .toList();
     }
 
     return [];
@@ -293,6 +389,29 @@ class BackendAdapters {
     };
   }
 
+  static Map<String, dynamic> _advancedPaginationFromBackend(
+      dynamic pagination) {
+    if (pagination == null) {
+      return {
+        'page': 1,
+        'limit': 20,
+        'total': 0,
+        'total_pages': 0,
+        'has_next': false,
+        'has_prev': false,
+      };
+    }
+
+    return {
+      'page': pagination['page'] ?? 1,
+      'limit': pagination['limit'] ?? 20,
+      'total': pagination['total_results'] ?? 0,
+      'total_pages': pagination['total_pages'] ?? 0,
+      'has_next': pagination['has_next'] ?? false,
+      'has_prev': pagination['has_previous'] ?? false,
+    };
+  }
+
   // ===============================
   // REQUEST BUILDERS
   // ===============================
@@ -322,7 +441,7 @@ class BackendAdapters {
     return params;
   }
 
-  /// Build search request parameters
+  /// Build search request parameters (legacy news search)
   static Map<String, dynamic> buildSearchRequest({
     required String query,
     int page = 1,
@@ -347,6 +466,89 @@ class BackendAdapters {
     if (dateFrom != null) params['date_from'] = dateFrom;
     if (dateTo != null) params['date_to'] = dateTo;
     if (onlyIndian != null) params['only_indian'] = onlyIndian;
+
+    return params;
+  }
+
+  /// Build advanced search request parameters (PostgreSQL full-text search)
+  static Map<String, dynamic> buildAdvancedSearchRequest({
+    required String query,
+    int page = 1,
+    int limit = 20,
+    List<String>? categoryIds,
+    List<String>? sources,
+    List<String>? authors,
+    List<String>? tags,
+    bool? isIndianContent,
+    bool? isFeatured,
+    double? minRelevanceScore,
+    double? maxRelevanceScore,
+    String? sortBy,
+    String? sortOrder,
+    bool enableCache = true,
+    bool enableAnalytics = true,
+    bool enableSuggestions = true,
+  }) {
+    final params = <String, dynamic>{
+      'query': query,
+      'page': page,
+      'limit': limit,
+      'enable_cache': enableCache,
+      'enable_analytics': enableAnalytics,
+      'enable_suggestions': enableSuggestions,
+    };
+
+    if (categoryIds != null && categoryIds.isNotEmpty) {
+      // Convert string IDs to integers for backend
+      final intIds = categoryIds
+          .map((id) => int.tryParse(id))
+          .where((id) => id != null)
+          .cast<int>()
+          .toList();
+      if (intIds.isNotEmpty) {
+        params['category_ids'] = intIds;
+      }
+    }
+
+    if (sources != null && sources.isNotEmpty) {
+      params['sources'] = sources;
+    }
+
+    if (authors != null && authors.isNotEmpty) {
+      params['authors'] = authors;
+    }
+
+    if (tags != null && tags.isNotEmpty) {
+      params['tags'] = tags;
+    }
+
+    if (isIndianContent != null) {
+      params['is_indian_content'] = isIndianContent;
+    }
+
+    if (isFeatured != null) {
+      params['is_featured'] = isFeatured;
+    }
+
+    if (minRelevanceScore != null) {
+      params['min_relevance_score'] = minRelevanceScore;
+    }
+
+    if (maxRelevanceScore != null) {
+      params['max_relevance_score'] = maxRelevanceScore;
+    }
+
+    if (sortBy != null) {
+      params['sort_by'] = sortBy;
+    } else {
+      params['sort_by'] = 'relevance'; // Default to relevance
+    }
+
+    if (sortOrder != null) {
+      params['sort_order'] = sortOrder;
+    } else {
+      params['sort_order'] = 'desc'; // Default to descending
+    }
 
     return params;
   }

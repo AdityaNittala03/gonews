@@ -28,7 +28,7 @@ class ApiEndpoints {
   // Main news endpoints
   static String get newsFeed => '$_baseUrl/news';
   static String get newsFeedAlternate => '$_baseUrl/news/feed';
-  static String get searchNews => '$_baseUrl/news/search';
+  static String get searchNews => '$_baseUrl/news/search'; // Legacy search
   static String get trendingNews => '$_baseUrl/news/trending';
   static String get categories => '$_baseUrl/news/categories';
   static String get newsStats => '$_baseUrl/news/stats';
@@ -54,6 +54,32 @@ class ApiEndpoints {
   static String get refreshNews => '$_baseUrl/news/refresh';
 
   // ===============================
+  // ADVANCED SEARCH ENDPOINTS (PostgreSQL Full-Text Search)
+  // ===============================
+
+  // Main advanced search endpoints
+  static String get advancedSearch => '$_baseUrl/search';
+  static String get searchByContent => '$_baseUrl/search/content';
+  static String get searchByCategory => '$_baseUrl/search/category';
+
+  // Search suggestions and autocomplete
+  static String get searchSuggestions => '$_baseUrl/search/suggestions';
+  static String get popularSearchTerms => '$_baseUrl/search/popular';
+  static String get trendingTopics => '$_baseUrl/search/trending';
+  static String get relatedSearchTerms => '$_baseUrl/search/related';
+
+  // Search service status
+  static String get searchServiceStatus => '$_baseUrl/search/status';
+
+  // Similar articles (requires auth)
+  static String searchSimilarArticles(String articleId) =>
+      '$_baseUrl/search/similar/$articleId';
+
+  // Search analytics (requires auth)
+  static String get searchAnalytics => '$_baseUrl/search/analytics';
+  static String get searchPerformanceStats => '$_baseUrl/search/performance';
+
+  // ===============================
   // HEALTH & STATUS ENDPOINTS
   // ===============================
 
@@ -75,7 +101,7 @@ class ApiEndpoints {
     };
   }
 
-  /// Build search parameters
+  /// Build search parameters for legacy news search
   static Map<String, dynamic> searchParams({
     required String query,
     int page = 1,
@@ -99,6 +125,74 @@ class ApiEndpoints {
     if (dateFrom != null) params['date_from'] = dateFrom;
     if (dateTo != null) params['date_to'] = dateTo;
     if (onlyIndian != null) params['only_indian'] = onlyIndian;
+
+    return params;
+  }
+
+  /// Build advanced search parameters (for PostgreSQL full-text search)
+  static Map<String, dynamic> advancedSearchParams({
+    required String query,
+    int page = 1,
+    int limit = 20,
+    List<int>? categoryIds,
+    List<String>? sources,
+    List<String>? authors,
+    List<String>? tags,
+    bool? isIndianContent,
+    bool? isFeatured,
+    double? minRelevanceScore,
+    double? maxRelevanceScore,
+    String? sortBy,
+    String? sortOrder,
+    bool? enableCache,
+    bool? enableAnalytics,
+    bool? enableSuggestions,
+  }) {
+    final params = <String, dynamic>{
+      'query': query,
+      'page': page,
+      'limit': limit,
+    };
+
+    if (categoryIds != null && categoryIds.isNotEmpty) {
+      params['category_ids'] = categoryIds;
+    }
+    if (sources != null && sources.isNotEmpty) {
+      params['sources'] = sources;
+    }
+    if (authors != null && authors.isNotEmpty) {
+      params['authors'] = authors;
+    }
+    if (tags != null && tags.isNotEmpty) {
+      params['tags'] = tags;
+    }
+    if (isIndianContent != null) {
+      params['is_indian_content'] = isIndianContent;
+    }
+    if (isFeatured != null) {
+      params['is_featured'] = isFeatured;
+    }
+    if (minRelevanceScore != null) {
+      params['min_relevance_score'] = minRelevanceScore;
+    }
+    if (maxRelevanceScore != null) {
+      params['max_relevance_score'] = maxRelevanceScore;
+    }
+    if (sortBy != null) {
+      params['sort_by'] = sortBy;
+    }
+    if (sortOrder != null) {
+      params['sort_order'] = sortOrder;
+    }
+    if (enableCache != null) {
+      params['enable_cache'] = enableCache;
+    }
+    if (enableAnalytics != null) {
+      params['enable_analytics'] = enableAnalytics;
+    }
+    if (enableSuggestions != null) {
+      params['enable_suggestions'] = enableSuggestions;
+    }
 
     return params;
   }

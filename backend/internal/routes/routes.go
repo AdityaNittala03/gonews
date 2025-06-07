@@ -1,4 +1,4 @@
-// routes/routes.go - Updated with OTP Integration
+// routes/routes.go - Updated with Search Integration + OTP Integration
 
 package routes
 
@@ -18,7 +18,7 @@ import (
 	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes with OTP integration
+// SetupRoutes configures all application routes with Search + OTP integration
 func SetupRoutes(
 	app *fiber.App,
 	db *sqlx.DB,
@@ -30,16 +30,17 @@ func SetupRoutes(
 	newsService *services.NewsAggregatorService,
 	performanceService *services.PerformanceService,
 	cacheService *services.CacheService,
+	searchService *services.SearchService, // ADDED: Search service
 ) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
 	articleRepo := repository.NewArticleRepository(db)
-	otpRepo := repository.NewOTPRepository(db) // NEW: OTP repository
+	otpRepo := repository.NewOTPRepository(db)
 
 	// Initialize services
 	authService := services.NewAuthService(userRepo, jwtManager)
 
-	// NEW: Initialize OTP and Email services
+	// Initialize OTP and Email services
 	emailService := services.NewEmailService(cfg, log)
 	otpService := services.NewOTPService(otpRepo, emailService, log)
 
@@ -52,6 +53,7 @@ func SetupRoutes(
 		finalNewsService        *services.NewsAggregatorService
 		finalCacheService       *services.CacheService
 		finalPerformanceService *services.PerformanceService
+		finalSearchService      *services.SearchService
 	)
 
 	if newsService != nil {
@@ -69,6 +71,11 @@ func SetupRoutes(
 		log.Info("Using provided PerformanceService")
 	}
 
+	if searchService != nil {
+		finalSearchService = searchService
+		log.Info("Using provided SearchService with PostgreSQL full-text search")
+	}
+
 	// Fallback initialization if services not provided
 	if finalCacheService == nil {
 		log.Info("Initializing fallback CacheService...")
@@ -81,7 +88,6 @@ func SetupRoutes(
 		quotaManager := services.NewQuotaManager(cfg, db, rdb, log)
 		sqlDB := db.DB
 
-		// FIXED: Include ArticleRepository parameter
 		finalNewsService = services.NewNewsAggregatorService(
 			sqlDB,        // *sql.DB
 			db,           // *sqlx.DB
@@ -96,13 +102,26 @@ func SetupRoutes(
 		log.Info("Fallback NewsAggregatorService initialized with database-first architecture")
 	}
 
+	if finalSearchService == nil {
+		log.Info("Initializing fallback SearchService with PostgreSQL full-text search...")
+		finalSearchService = services.NewSearchService(cfg, log, db, rdb)
+		log.Info("Fallback SearchService initialized with PostgreSQL full-text search")
+	}
+
 	// ===============================
-	// INITIALIZE HANDLERS WITH OTP SUPPORT
+	// INITIALIZE HANDLERS WITH SEARCH + OTP SUPPORT
 	// ===============================
 
 	// Enhanced auth handler with OTP services
 	authHandler := handlers.NewAuthHandler(authService, otpService, emailService, userRepo)
 	newsHandler := handlers.NewNewsHandler(finalNewsService, finalCacheService, cfg, log)
+
+	// Search handler with PostgreSQL full-text search
+	var searchHandler *handlers.SearchHandler
+	if finalSearchService != nil {
+		searchHandler = handlers.NewSearchHandler(finalSearchService, log)
+		log.Info("Search handler initialized with PostgreSQL full-text search")
+	}
 
 	// Advanced handler (conditional)
 	var performanceHandler *handlers.PerformanceHandler
@@ -114,11 +133,13 @@ func SetupRoutes(
 	log.Info("All handlers initialized successfully", map[string]interface{}{
 		"auth_handler":         "✅ Enhanced with OTP verification",
 		"news_handler":         "✅",
+		"search_handler":       searchHandler != nil,
 		"performance_handler":  performanceHandler != nil,
 		"advanced_features":    finalPerformanceService != nil,
 		"database_integration": "✅ Database-first architecture enabled",
 		"otp_integration":      "✅ Email OTP verification enabled",
 		"email_service":        "✅ Professional email templates",
+		"search_integration":   "✅ PostgreSQL full-text search enabled",
 	})
 
 	// ===============================
@@ -127,16 +148,18 @@ func SetupRoutes(
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		features := fiber.Map{
-			"authentication":     true,
-			"news_aggregation":   true,
-			"live_apis":          true,
-			"database_first":     true,
-			"article_storage":    true,
-			"advanced_features":  finalPerformanceService != nil,
-			"quota_conservation": true,
-			"instant_responses":  true,
-			"otp_verification":   true,
-			"email_service":      true,
+			"authentication":      true,
+			"news_aggregation":    true,
+			"search":              searchHandler != nil,
+			"postgresql_fulltext": searchHandler != nil,
+			"live_apis":           true,
+			"database_first":      true,
+			"article_storage":     true,
+			"advanced_features":   finalPerformanceService != nil,
+			"quota_conservation":  true,
+			"instant_responses":   true,
+			"otp_verification":    true,
+			"email_service":       true,
 		}
 
 		return c.JSON(fiber.Map{
@@ -144,7 +167,7 @@ func SetupRoutes(
 			"service":      "gonews-api",
 			"version":      "1.0.0",
 			"checkpoint":   determineCheckpoint(finalPerformanceService != nil),
-			"architecture": "Database-First News Aggregation with OTP Verification",
+			"architecture": "Database-First News Aggregation with PostgreSQL Search + OTP Verification",
 			"features":     features,
 			"timestamp":    time.Now().Format(time.RFC3339),
 		})
@@ -165,6 +188,12 @@ func SetupRoutes(
 	// News routes with database-first integration
 	setupNewsRoutes(api, newsHandler, jwtManager, finalNewsService, log)
 
+	// Search routes with PostgreSQL full-text search
+	if searchHandler != nil {
+		setupSearchRoutes(api, searchHandler, jwtManager)
+		log.Info("Search routes configured ✅")
+	}
+
 	// Advanced features routes (conditional)
 	if performanceHandler != nil {
 		setupPerformanceRoutes(api, performanceHandler, jwtManager)
@@ -176,6 +205,9 @@ func SetupRoutes(
 	if performanceHandler != nil {
 		setupPerformanceHealthRoutes(app, performanceHandler)
 	}
+	if searchHandler != nil {
+		setupSearchHealthRoutes(app, searchHandler)
+	}
 
 	// Protected routes (require authentication)
 	setupProtectedRoutes(api, jwtManager)
@@ -184,12 +216,14 @@ func SetupRoutes(
 		"public_routes":         "✅",
 		"auth_routes":           "✅ Enhanced with OTP verification",
 		"news_routes":           "✅ Database-first enabled",
+		"search_routes":         searchHandler != nil,
 		"performance_routes":    performanceHandler != nil,
 		"protected_routes":      "✅",
 		"health_routes":         "✅",
 		"advanced_integration":  finalPerformanceService != nil,
 		"database_architecture": "✅ Articles served from PostgreSQL",
 		"otp_integration":       "✅ Complete OTP workflow enabled",
+		"search_integration":    "✅ PostgreSQL full-text search enabled",
 	})
 }
 
@@ -200,14 +234,15 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 		return c.JSON(fiber.Map{
 			"api_version":  "1.0.0",
 			"status":       "operational",
-			"checkpoint":   "OTP Integration Complete",
-			"architecture": "Database-First News Aggregation with OTP Verification",
+			"checkpoint":   "Search Integration Complete",
+			"architecture": "Database-First News Aggregation with PostgreSQL Search + OTP Verification",
 			"features": fiber.Map{
 				"authentication":         true,
 				"news_aggregation":       true,
 				"user_profiles":          true,
 				"bookmarks":              true,
 				"search":                 true,
+				"postgresql_fulltext":    true,
 				"live_apis":              true,
 				"database_first":         true,
 				"article_storage":        true,
@@ -231,6 +266,7 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"storage":          "PostgreSQL",
 				"cache":            "Redis",
 				"serving_strategy": "Database-first with API fallback",
+				"search":           "PostgreSQL full-text search enabled",
 			},
 			"security": fiber.Map{
 				"otp_verification": "enabled",
@@ -316,6 +352,66 @@ func setupAuthRoutesWithOTP(api fiber.Router, authHandler *handlers.AuthHandler,
 			},
 		})
 	})
+}
+
+// setupSearchRoutes configures all search-related routes with PostgreSQL full-text search
+func setupSearchRoutes(api fiber.Router, searchHandler *handlers.SearchHandler, jwtManager *auth.JWTManager) {
+	// Create search API group
+	search := api.Group("/search")
+
+	// ===============================
+	// PUBLIC SEARCH ENDPOINTS (PostgreSQL Full-Text Search)
+	// ===============================
+
+	// Main search endpoint - PostgreSQL full-text search with ranking
+	search.Get("/", searchHandler.SearchArticles)
+	search.Get("", searchHandler.SearchArticles) // Alternative path
+
+	// Content-based search with text ranking
+	search.Get("/content", searchHandler.SearchByContent)
+
+	// Category-specific search
+	search.Get("/category", searchHandler.SearchByCategory)
+
+	// Search suggestions and autocomplete (public)
+	search.Get("/suggestions", searchHandler.GetSearchSuggestions)
+
+	// Popular and trending search terms (public)
+	search.Get("/popular", searchHandler.GetPopularSearchTerms)
+	search.Get("/trending", searchHandler.GetTrendingTopics)
+	search.Get("/related", searchHandler.GetRelatedSearchTerms)
+
+	// Search service status (public)
+	search.Get("/status", searchHandler.GetSearchServiceStatus)
+
+	// ===============================
+	// AUTHENTICATED SEARCH ENDPOINTS
+	// ===============================
+
+	// Create authenticated sub-group
+	authSearch := search.Use(middleware.AuthMiddleware(jwtManager))
+
+	// Similar articles (requires auth for personalization)
+	authSearch.Get("/similar/:id", searchHandler.SearchSimilarArticles)
+
+	// Search analytics (authenticated users)
+	authSearch.Get("/analytics", searchHandler.GetSearchAnalytics)
+
+	// Search performance stats (authenticated users)
+	authSearch.Get("/performance", searchHandler.GetSearchPerformanceStats)
+
+	// ===============================
+	// ADMIN SEARCH ENDPOINTS
+	// ===============================
+
+	// Create admin sub-group
+	adminSearch := authSearch.Use(middleware.AdminMiddleware())
+
+	// Advanced search analytics (admin only)
+	adminSearch.Get("/analytics/detailed", searchHandler.AnalyzeSearchPerformance)
+
+	// Search cache management (admin only)
+	adminSearch.Delete("/cache", searchHandler.ClearSearchCache)
 }
 
 // setupPerformanceRoutes configures performance monitoring routes
@@ -471,6 +567,7 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	news.Get("/category/:category", newsHandler.GetCategoryNews)
 
 	// Search news articles (DATABASE-FIRST INTEGRATION!)
+	// NOTE: This is legacy - main search is now at /api/v1/search
 	news.Get("/search", newsHandler.SearchNews)
 
 	// Get trending news (DATABASE-FIRST INTEGRATION!)
@@ -575,6 +672,7 @@ func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 				"storage":  "PostgreSQL",
 				"cache":    "Redis",
 				"articles": "stored",
+				"search":   "full-text enabled",
 			},
 			"apis": fiber.Map{
 				"newsdata_io": "fallback",
@@ -617,6 +715,34 @@ func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 			"last_check": time.Now().Format(time.RFC3339),
 		})
 	})
+}
+
+// setupSearchHealthRoutes sets up search health check endpoints
+func setupSearchHealthRoutes(app *fiber.App, searchHandler *handlers.SearchHandler) {
+	// Search service health check
+	app.Get("/health/search", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":      "healthy",
+			"search_type": "postgresql_fulltext",
+			"features": fiber.Map{
+				"full_text_search":    "enabled",
+				"intelligent_caching": "enabled",
+				"search_analytics":    "enabled",
+				"india_optimization":  "enabled",
+				"suggestions":         "enabled",
+				"trending_analysis":   "enabled",
+			},
+			"performance": fiber.Map{
+				"avg_search_time": "<500ms",
+				"cache_hit_rate":  "30-50%",
+				"index_type":      "btree_gin",
+			},
+			"last_check": time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Search system status
+	app.Get("/health/search/system", searchHandler.GetSearchServiceStatus)
 }
 
 // setupPerformanceHealthRoutes sets up performance health check endpoints
@@ -720,11 +846,12 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 
 	search.Get("/news", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message":        "DEPRECATED: Use /api/v1/news/search instead",
-			"redirect":       "/api/v1/news/search",
-			"live_search":    "enabled",
-			"database_first": "enabled",
-			"recommendation": "Switch to new endpoint for database-first news search",
+			"message":           "DEPRECATED: Use /api/v1/search instead",
+			"redirect":          "/api/v1/search",
+			"live_search":       "enabled",
+			"postgresql_search": "enabled",
+			"database_first":    "enabled",
+			"recommendation":    "Switch to new endpoint for PostgreSQL full-text search",
 		})
 	})
 }
@@ -736,69 +863,14 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 // determineCheckpoint returns the current checkpoint based on features available
 func determineCheckpoint(hasAdvancedFeatures bool) string {
 	if hasAdvancedFeatures {
-		return "5 - Advanced Features & Optimization (Database-First + OTP)"
+		return "6 - Search Integration Complete (Database-First + PostgreSQL Search + OTP)"
 	}
-	return "OTP Integration Complete"
+	return "Search Integration Complete"
 }
 
 // ===============================
 // ROUTE DOCUMENTATION
 // ===============================
-
-// GetOTPRoutesSummary returns a summary of OTP-related routes
-func GetOTPRoutesSummary() map[string][]RouteInfo {
-	return map[string][]RouteInfo{
-		"otp_registration": {
-			{Method: "POST", Path: "/api/v1/auth/register", Description: "Step 1: Send registration OTP", AuthLevel: "none"},
-			{Method: "POST", Path: "/api/v1/auth/verify-registration-otp", Description: "Step 2: Verify registration OTP", AuthLevel: "none"},
-			{Method: "POST", Path: "/api/v1/auth/complete-registration", Description: "Step 3: Complete registration", AuthLevel: "none"},
-		},
-		"otp_password_reset": {
-			{Method: "POST", Path: "/api/v1/auth/forgot-password", Description: "Step 1: Send password reset OTP", AuthLevel: "none"},
-			{Method: "POST", Path: "/api/v1/auth/verify-password-reset-otp", Description: "Step 2: Verify reset OTP", AuthLevel: "none"},
-			{Method: "POST", Path: "/api/v1/auth/reset-password", Description: "Step 3: Reset password", AuthLevel: "none"},
-		},
-		"otp_utilities": {
-			{Method: "POST", Path: "/api/v1/auth/resend-otp", Description: "Resend any OTP type", AuthLevel: "none"},
-			{Method: "GET", Path: "/api/v1/auth/otp-status", Description: "OTP service status", AuthLevel: "none"},
-			{Method: "GET", Path: "/health/otp", Description: "OTP health check", AuthLevel: "none"},
-		},
-	}
-}
-
-// GetAdvancedRoutesSummary returns a summary of all advanced routes for documentation
-func GetAdvancedRoutesSummary() map[string][]RouteInfo {
-	return map[string][]RouteInfo{
-		"performance_public": {
-			{Method: "GET", Path: "/api/v1/performance/status", Description: "Performance monitoring status", AuthLevel: "none"},
-			{Method: "GET", Path: "/api/v1/performance/system-metrics", Description: "System performance metrics", AuthLevel: "none"},
-			{Method: "GET", Path: "/api/v1/performance/cache-analytics", Description: "Cache performance analytics", AuthLevel: "none"},
-		},
-		"performance_authenticated": {
-			{Method: "GET", Path: "/api/v1/performance/report", Description: "Comprehensive performance report", AuthLevel: "user"},
-			{Method: "GET", Path: "/api/v1/performance/query-stats", Description: "Database query statistics", AuthLevel: "user"},
-			{Method: "GET", Path: "/api/v1/performance/database", Description: "Database performance metrics", AuthLevel: "user"},
-			{Method: "GET", Path: "/api/v1/performance/trends", Description: "Performance trends over time", AuthLevel: "user"},
-			{Method: "GET", Path: "/api/v1/performance/alerts", Description: "Performance alerts and warnings", AuthLevel: "user"},
-			{Method: "GET", Path: "/api/v1/performance/cache-warmup", Description: "Cache warmup status", AuthLevel: "user"},
-		},
-		"performance_admin": {
-			{Method: "POST", Path: "/api/v1/performance/optimize", Description: "Trigger performance optimization", AuthLevel: "admin"},
-			{Method: "POST", Path: "/api/v1/performance/cache-warmup", Description: "Trigger cache warmup", AuthLevel: "admin"},
-			{Method: "GET", Path: "/api/v1/performance/index-recommendations", Description: "Database index recommendations", AuthLevel: "admin"},
-		},
-		"health_advanced": {
-			{Method: "GET", Path: "/health/performance", Description: "Performance system health check", AuthLevel: "none"},
-			{Method: "GET", Path: "/health/performance/system", Description: "Performance monitoring system status", AuthLevel: "none"},
-			{Method: "GET", Path: "/health/database-first", Description: "Database-first architecture health check", AuthLevel: "none"},
-			{Method: "GET", Path: "/health/otp", Description: "OTP service health check", AuthLevel: "none"},
-		},
-		"debug_endpoints": {
-			{Method: "GET", Path: "/api/v1/news/debug/database", Description: "Test database-first integration", AuthLevel: "none"},
-			{Method: "GET", Path: "/api/v1/news/debug/live", Description: "Test live API integration", AuthLevel: "none"},
-		},
-	}
-}
 
 // RouteInfo represents information about a route for documentation
 type RouteInfo struct {

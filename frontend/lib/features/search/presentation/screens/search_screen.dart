@@ -1,5 +1,6 @@
 // lib/features/search/presentation/screens/search_screen.dart
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -13,8 +14,14 @@ import '../../../../core/network/api_client.dart';
 import '../../../news/data/models/article_model.dart';
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 
-// Search providers
+// ===============================
+// OPTIMIZED SEARCH PROVIDERS
+// ===============================
+
+// Search query provider - updates on every keystroke
 final searchQueryProvider = StateProvider<String>((ref) => '');
+
+// Search filter and sort providers
 final searchFilterProvider = StateProvider<String>((ref) => 'all');
 final searchSortProvider =
     StateProvider<SearchSort>((ref) => SearchSort.recent);
@@ -27,15 +34,37 @@ final searchNewsServiceProvider = Provider<NewsService>((ref) {
   return NewsService(apiClient);
 });
 
-final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
+// Debounced search provider - only triggers search after user stops typing
+final debouncedSearchQueryProvider = Provider<String>((ref) {
   final query = ref.watch(searchQueryProvider);
-  final filter = ref.watch(searchFilterProvider);
-  final sort = ref.watch(searchSortProvider);
 
-  if (query.trim().isEmpty) return [];
+  // Only trigger search for meaningful queries (3+ characters)
+  if (query.trim().length < 3) {
+    return ''; // Don't search for queries shorter than 3 characters
+  }
+
+  return query.trim();
+});
+
+// Optimized search results provider with debouncing and better error handling
+final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
+  final query = ref.watch(debouncedSearchQueryProvider);
+
+  // Return empty list for short queries instead of searching
+  if (query.isEmpty) return [];
 
   try {
     final newsService = ref.read(searchNewsServiceProvider);
+
+    // Add delay to debounce rapid typing
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Check if query is still current after delay
+    final currentQuery = ref.read(debouncedSearchQueryProvider);
+    if (currentQuery != query) {
+      return []; // Query changed, abort this search
+    }
+
     final result = await newsService.searchNews(
       query: query,
       page: 1,
@@ -43,11 +72,29 @@ final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
       onlyIndian: true,
     );
 
+    // ADD THIS DEBUG LOGGING:
+    debugPrint('🔍 Search result success: ${result.isSuccess}');
+    debugPrint('🔍 Search result articles count: ${result.articles.length}');
+    debugPrint('🔍 Search result message: ${result.message}');
+
     if (!result.isSuccess) {
+      debugPrint('🔍 Search failed with message: ${result.message}');
+      // ... rest of error handling
+    }
+
+    if (!result.isSuccess) {
+      // Don't throw error for empty results, just return empty list
+      if (result.articles.isEmpty) {
+        return [];
+      }
       throw Exception(result.message);
     }
 
     List<Article> results = result.articles;
+
+    // Apply filters and sorting
+    final filter = ref.watch(searchFilterProvider);
+    final sort = ref.watch(searchSortProvider);
 
     // Apply category filter
     if (filter != 'all') {
@@ -64,7 +111,6 @@ final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
         results.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
         break;
       case SearchSort.relevant:
-        // Simple relevance: prioritize title matches, then description
         results.sort((a, b) {
           final aScore = _getRelevanceScore(a, query);
           final bScore = _getRelevanceScore(b, query);
@@ -75,10 +121,12 @@ final searchResultsProvider = FutureProvider<List<Article>>((ref) async {
 
     return results;
   } catch (e) {
-    throw Exception('Search failed: $e');
+    debugPrint('🔍 Search error for "$query": $e');
+    throw Exception('Search failed: Please try again');
   }
 });
 
+// Relevance scoring function (moved outside class to be accessible by provider)
 int _getRelevanceScore(Article article, String query) {
   final queryLower = query.toLowerCase();
   int score = 0;
@@ -114,6 +162,10 @@ int _getRelevanceScore(Article article, String query) {
   return score;
 }
 
+// ===============================
+// SEARCH SCREEN WIDGET
+// ===============================
+
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({Key? key}) : super(key: key);
 
@@ -128,6 +180,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   late Animation<double> _fadeAnimation;
 
   bool _isSearchFocused = false;
+  Timer? _debounceTimer;
+
   List<String> _searchHistory = [
     'IPL 2024',
     'Stock market',
@@ -161,6 +215,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   void dispose() {
     _searchController.dispose();
     _animationController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -179,14 +234,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
               // Search Header
               _buildSearchHeader(),
 
-              // Search Filters and Sort
-              if (searchQuery.isNotEmpty) _buildFiltersAndSort(),
+              // Search Filters and Sort (only show for queries >= 3 chars)
+              if (searchQuery.length >= 3) _buildFiltersAndSort(),
 
               // Search Content
               Expanded(
-                child: searchQuery.isEmpty
-                    ? _buildSearchSuggestions()
-                    : _buildSearchResults(searchResults),
+                child: _buildSearchContent(searchQuery, searchResults),
               ),
             ],
           ),
@@ -230,72 +283,115 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
 
           const SizedBox(width: 12),
 
-          // Search field
+          // Optimized Search field
           Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.grey50,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color:
-                      _isSearchFocused ? AppColors.primary : AppColors.grey200,
-                  width: _isSearchFocused ? 2 : 1,
-                ),
-              ),
-              child: TextField(
-                controller: _searchController,
-                onChanged: (value) {
-                  ref.read(searchQueryProvider.notifier).state = value;
-                },
-                onTap: () {
-                  setState(() {
-                    _isSearchFocused = true;
-                  });
-                },
-                onTapOutside: (_) {
-                  setState(() {
-                    _isSearchFocused = false;
-                  });
-                },
-                decoration: InputDecoration(
-                  hintText: 'Search news in India...',
-                  hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                  prefixIcon: Icon(
-                    Icons.search,
-                    color: _isSearchFocused
-                        ? AppColors.primary
-                        : AppColors.grey400,
-                  ),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          onPressed: () {
-                            _searchController.clear();
-                            ref.read(searchQueryProvider.notifier).state = '';
-                          },
-                          icon: const Icon(
-                            Icons.clear,
-                            color: AppColors.grey400,
-                          ),
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                ),
-                textInputAction: TextInputAction.search,
-                onSubmitted: (value) {
-                  if (value.trim().isNotEmpty) {
-                    _addToSearchHistory(value.trim());
-                  }
-                },
-              ),
-            ),
+            child: _buildOptimizedSearchField(),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOptimizedSearchField() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.grey50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isSearchFocused ? AppColors.primary : AppColors.grey200,
+          width: _isSearchFocused ? 2 : 1,
+        ),
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (value) {
+          // Update query immediately for UI responsiveness
+          ref.read(searchQueryProvider.notifier).state = value;
+
+          // Cancel previous timer
+          _debounceTimer?.cancel();
+
+          // Start new timer for debounced search
+          _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+            // This will trigger the debouncedSearchQueryProvider
+            setState(() {}); // Trigger rebuild to update UI hints
+          });
+        },
+        onTap: () {
+          setState(() {
+            _isSearchFocused = true;
+          });
+        },
+        onTapOutside: (_) {
+          setState(() {
+            _isSearchFocused = false;
+          });
+        },
+        decoration: InputDecoration(
+          hintText: 'Search news (minimum 3 characters)...',
+          hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppColors.textSecondary,
+              ),
+          prefixIcon: Icon(
+            Icons.search,
+            color: _isSearchFocused ? AppColors.primary : AppColors.grey400,
+          ),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Show character counter for short queries
+                    if (_searchController.text.isNotEmpty &&
+                        _searchController.text.length < 3)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(
+                          '${3 - _searchController.text.length} more',
+                          style:
+                              Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: AppColors.grey400,
+                                    fontSize: 10,
+                                  ),
+                        ),
+                      ),
+                    IconButton(
+                      onPressed: () {
+                        _searchController.clear();
+                        ref.read(searchQueryProvider.notifier).state = '';
+                        _debounceTimer?.cancel();
+                      },
+                      icon: const Icon(
+                        Icons.clear,
+                        color: AppColors.grey400,
+                      ),
+                    ),
+                  ],
+                )
+              : null,
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
+        ),
+        textInputAction: TextInputAction.search,
+        onSubmitted: (value) {
+          if (value.trim().length >= 3) {
+            _addToSearchHistory(value.trim());
+            // Force immediate search on submit
+            ref.invalidate(searchResultsProvider);
+          } else {
+            // Show hint for short queries
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Please enter at least 3 characters'),
+                backgroundColor: AppColors.info,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        },
       ),
     );
   }
@@ -358,63 +454,48 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     );
   }
 
-  Widget _buildFilterChip(String label, String value) {
-    final selectedFilter = ref.watch(searchFilterProvider);
-    final isSelected = selectedFilter == value;
+  Widget _buildSearchContent(
+      String searchQuery, AsyncValue<List<Article>> searchResults) {
+    // Show hint for short queries
+    if (searchQuery.isNotEmpty && searchQuery.length < 3) {
+      return _buildSearchHint();
+    }
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: () {
-          ref.read(searchFilterProvider.notifier).state = value;
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: isSelected ? AppColors.primary : AppColors.grey100,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isSelected ? AppColors.primary : AppColors.grey200,
-            ),
-          ),
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: isSelected ? AppColors.white : AppColors.textPrimary,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                ),
-          ),
-        ),
-      ),
-    );
+    // Show suggestions for empty queries
+    if (searchQuery.isEmpty) {
+      return _buildSearchSuggestions();
+    }
+
+    // Show search results
+    return _buildSearchResults(searchResults);
   }
 
-  Widget _buildSortChip(String label, SearchSort value) {
-    final selectedSort = ref.watch(searchSortProvider);
-    final isSelected = selectedSort == value;
-
-    return GestureDetector(
-      onTap: () {
-        ref.read(searchSortProvider.notifier).state = value;
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.secondary : AppColors.grey100,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? AppColors.secondary : AppColors.grey200,
+  Widget _buildSearchHint() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.search,
+            size: 60,
+            color: AppColors.grey400,
           ),
-        ),
-        child: Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: isSelected ? AppColors.white : AppColors.textPrimary,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-              ),
-        ),
+          const SizedBox(height: 16),
+          Text(
+            'Type at least 3 characters to search',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Try searching for complete words like "India", "cricket", or "business"',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.grey400,
+                ),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -577,9 +658,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
   }
 
   Widget _buildSearchResults(AsyncValue<List<Article>> searchResults) {
+    final currentQuery = ref.watch(searchQueryProvider);
+
     return searchResults.when(
       data: (articles) {
-        if (articles.isEmpty) {
+        if (articles.isEmpty && currentQuery.length >= 3) {
           return _buildEmptyResults();
         }
 
@@ -591,7 +674,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
               child: Row(
                 children: [
                   Text(
-                    '${articles.length} result${articles.length == 1 ? '' : 's'} found',
+                    '${articles.length} result${articles.length == 1 ? '' : 's'} for "$currentQuery"',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppColors.textSecondary,
                         ),
@@ -628,14 +711,22 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         );
       },
       loading: () => _buildLoadingResults(),
-      error: (error, stack) => _buildErrorResults(),
+      error: (error, stack) => _buildErrorResults(error.toString()),
     );
   }
 
   Widget _buildSearchResultCard(Article article) {
     return GestureDetector(
-      onTap: () =>
-          context.push('/article/${article.uniqueId}'), // FIXED: Use uniqueId
+      onTap: () {
+        // ADD DEBUG LOGGING:
+        debugPrint('🔍 Navigating to article:');
+        debugPrint('  - id: ${article.id}');
+        debugPrint('  - externalId: ${article.externalId}');
+        debugPrint('  - uniqueId: ${article.uniqueId}');
+        debugPrint('  - title: ${article.title}');
+
+        context.push('/article/${article.uniqueId}');
+      },
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -651,7 +742,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         ),
         child: Row(
           children: [
-            // Article thumbnail - FIXED: Use safeImageUrl
+            // Article thumbnail
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: SizedBox(
@@ -717,7 +808,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        article.timeAgo, // FIXED: Use timeAgo extension
+                        article.timeAgo,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: AppColors.grey400,
                               fontSize: 10,
@@ -765,6 +856,67 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String label, String value) {
+    final selectedFilter = ref.watch(searchFilterProvider);
+    final isSelected = selectedFilter == value;
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: GestureDetector(
+        onTap: () {
+          ref.read(searchFilterProvider.notifier).state = value;
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primary : AppColors.grey100,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : AppColors.grey200,
+            ),
+          ),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: isSelected ? AppColors.white : AppColors.textPrimary,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSortChip(String label, SearchSort value) {
+    final selectedSort = ref.watch(searchSortProvider);
+    final isSelected = selectedSort == value;
+
+    return GestureDetector(
+      onTap: () {
+        ref.read(searchSortProvider.notifier).state = value;
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.secondary : AppColors.grey100,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppColors.secondary : AppColors.grey200,
+          ),
+        ),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: isSelected ? AppColors.white : AppColors.textPrimary,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+              ),
         ),
       ),
     );
@@ -831,7 +983,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
     );
   }
 
-  Widget _buildErrorResults() {
+  Widget _buildErrorResults(String error) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -843,12 +995,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
           ),
           const SizedBox(height: 16),
           Text(
-            'Search failed',
+            'Search Error',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 8),
           Text(
-            'Please check your connection and try again',
+            error.contains('Search failed')
+                ? 'Unable to search right now. Please try again.'
+                : 'Please check your connection and try again',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                 ),
@@ -865,6 +1019,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
       ),
     );
   }
+
+  // ===============================
+  // HELPER METHODS
+  // ===============================
 
   void _selectSearchSuggestion(String query) {
     _searchController.text = query;

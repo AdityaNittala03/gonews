@@ -1,5 +1,5 @@
 // cmd/server/main.go
-// FIXED: Database-first architecture with OTP integration
+// UPDATED: Database-first architecture with Search + OTP integration
 
 package main
 
@@ -30,12 +30,13 @@ import (
 func main() {
 	// Initialize logger
 	logger := appLogger.NewLogger()
-	logger.Info("Starting GoNews server with OTP verification integration", map[string]interface{}{
+	logger.Info("Starting GoNews server with Search + OTP integration", map[string]interface{}{
 		"version":        "1.0.0",
 		"phase":          "2 - Backend Development",
-		"checkpoint":     "OTP Integration Complete",
-		"architecture":   "Database-First News Aggregation with OTP Verification",
+		"checkpoint":     "Search Integration Complete",
+		"architecture":   "Database-First News Aggregation with PostgreSQL Search + OTP Verification",
 		"database_ready": true,
+		"search_ready":   true,
 		"otp_ready":      true,
 		"email_ready":    true,
 	})
@@ -109,14 +110,14 @@ func main() {
 	}
 
 	// Run database migrations (uses *sqlx.DB)
-	logger.Info("Running database migrations with OTP table...")
+	logger.Info("Running database migrations with Search + OTP tables...")
 	if err := database.Migrate(db); err != nil {
 		logger.Error("Failed to run database migrations", map[string]interface{}{
 			"error": err.Error(),
 		})
 		os.Exit(1)
 	}
-	logger.Info("Database migrations completed successfully - OTP table ready")
+	logger.Info("Database migrations completed successfully - Search + OTP tables ready")
 
 	// Initialize JWT manager
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret)
@@ -124,12 +125,12 @@ func main() {
 		"expiration_hours": cfg.JWTExpirationHours,
 	})
 
-	// Initialize repositories with OTP support
-	logger.Info("Initializing repository layer with OTP support...")
+	// Initialize repositories with Search + OTP support
+	logger.Info("Initializing repository layer with Search + OTP support...")
 	articleRepo := repository.NewArticleRepository(db)
 	searchRepo := repository.NewSearchRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	otpRepo := repository.NewOTPRepository(db) // NEW: OTP repository
+	otpRepo := repository.NewOTPRepository(db)
 
 	logger.Info("Repository layer initialized", map[string]interface{}{
 		"article_repository": articleRepo != nil,
@@ -138,13 +139,13 @@ func main() {
 		"otp_repository":     otpRepo != nil,
 	})
 
-	// Initialize services with OTP integration
-	logger.Info("Initializing services with OTP integration...")
+	// Initialize services with Search + OTP integration
+	logger.Info("Initializing services with Search + OTP integration...")
 
 	// 1. Cache Service (required by other services)
 	cacheService := services.NewCacheService(rdb, cfg, logger)
 
-	// 2. Email Service (NEW: Required for OTP)
+	// 2. Email Service (Required for OTP)
 	emailService := services.NewEmailService(cfg, logger)
 	logger.Info("Email service initialized", map[string]interface{}{
 		"smtp_host": cfg.SMTPHost,
@@ -152,7 +153,7 @@ func main() {
 		"templates": "Professional GoNews email templates loaded",
 	})
 
-	// 3. OTP Service (NEW: Core OTP functionality)
+	// 3. OTP Service (Core OTP functionality)
 	otpService := services.NewOTPService(otpRepo, emailService, logger)
 	logger.Info("OTP service initialized", map[string]interface{}{
 		"otp_length":      6,
@@ -162,13 +163,24 @@ func main() {
 		"cleanup_enabled": true,
 	})
 
-	// 4. API Client
+	// 4. Search Service (NEW: PostgreSQL Full-Text Search)
+	searchService := services.NewSearchService(cfg, logger, db, rdb)
+	logger.Info("Search service initialized", map[string]interface{}{
+		"search_type":            "postgresql_fulltext",
+		"features":               []string{"intelligent_caching", "analytics", "india_optimization", "suggestions", "trending"},
+		"cache_enabled":          true,
+		"analytics_enabled":      true,
+		"india_optimization":     true,
+		"background_maintenance": true,
+	})
+
+	// 5. API Client
 	apiClient := services.NewAPIClient(cfg, logger)
 
-	// 5. Quota Manager
+	// 6. Quota Manager
 	quotaManager := services.NewQuotaManager(cfg, db, rdb, logger)
 
-	// 6. News Aggregator Service with Database Integration
+	// 7. News Aggregator Service with Database Integration
 	logger.Info("Initializing NewsAggregatorService with database integration...")
 	newsAggregatorService := services.NewNewsAggregatorService(
 		sqlDB,        // *sql.DB for legacy compatibility
@@ -191,26 +203,30 @@ func main() {
 		"api_fallback":         true,
 	})
 
-	// 7. Advanced Performance Service (Optional - skip if causing issues)
+	// 8. Advanced Performance Service (Optional - skip if causing issues)
 	logger.Info("Skipping performance service initialization to avoid compilation issues")
 
-	logger.Info("Service initialization completed with OTP integration", map[string]interface{}{
+	logger.Info("Service initialization completed with Search + OTP integration", map[string]interface{}{
 		"cache_service":       cacheService != nil,
 		"email_service":       emailService != nil,
 		"otp_service":         otpService != nil,
+		"search_service":      searchService != nil,
 		"news_service":        newsAggregatorService != nil,
 		"performance_service": false, // Disabled for now
 		"advanced_features":   false, // Disabled for now
 		"database_first":      true,
 		"repository_layer":    true,
+		"search_integration":  "✅ PostgreSQL full-text search enabled",
 		"otp_integration":     "✅ Complete OTP workflow enabled",
 		"email_templates":     "✅ Professional email templates ready",
 		"rate_limiting":       "✅ OTP rate limiting enabled",
+		"search_analytics":    "✅ Search analytics and trending enabled",
+		"india_optimization":  "✅ India-specific search optimization",
 	})
 
 	// Create Fiber app with enhanced configuration
 	app := fiber.New(fiber.Config{
-		AppName:       "GoNews API v1.0.0 (Database-First + OTP)",
+		AppName:       "GoNews API v1.0.0 (Database-First + Search + OTP)",
 		ServerHeader:  "GoNews",
 		StrictRouting: true,
 		CaseSensitive: true,
@@ -268,7 +284,7 @@ func main() {
 		Output:     os.Stdout,
 	}))
 
-	// Enhanced rate limiting for OTP endpoints
+	// Enhanced rate limiting for Search + OTP endpoints
 	app.Use(limiter.New(limiter.Config{
 		Max:        500,             // Increased for database-first performance
 		Expiration: 1 * time.Minute, // per minute
@@ -294,7 +310,7 @@ func main() {
 		EnableStackTrace: cfg.Environment == "development",
 	}))
 
-	// Setup routes with OTP integration
+	// Setup routes with Search + OTP integration
 	routes.SetupRoutes(
 		app,
 		db, // *sqlx.DB
@@ -306,6 +322,7 @@ func main() {
 		newsAggregatorService,
 		nil, // performanceService - disabled for now
 		cacheService,
+		searchService, // NEW: PostgreSQL Search Service
 	)
 
 	// Setup graceful shutdown
@@ -320,6 +337,12 @@ func main() {
 		if newsAggregatorService != nil {
 			newsAggregatorService.Close()
 			logger.Info("News aggregator service stopped")
+		}
+
+		if searchService != nil {
+			// Clear search cache and stop background tasks
+			searchService.ClearCache()
+			logger.Info("Search service stopped")
 		}
 
 		if otpService != nil {
@@ -340,9 +363,9 @@ func main() {
 		logger.Info("Server shutdown complete")
 	}()
 
-	// Print startup summary with OTP integration details
+	// Print startup summary with Search + OTP integration details
 	addr := fmt.Sprintf(":%s", cfg.Port)
-	logger.Info("🚀 GoNews server starting with Database-First Architecture + OTP Verification", map[string]interface{}{
+	logger.Info("🚀 GoNews server starting with Database-First Architecture + PostgreSQL Search + OTP Verification", map[string]interface{}{
 		"address":        addr,
 		"port":           cfg.Port,
 		"environment":    cfg.Environment,
@@ -351,15 +374,49 @@ func main() {
 		"cache":          "Redis connected ✅",
 		"authentication": "JWT + OTP enabled ✅",
 		"email_service":  "SMTP configured ✅",
+		"search":         "PostgreSQL full-text search enabled ✅",
 		"architecture": map[string]interface{}{
-			"type":              "Database-First News Aggregation",
-			"article_storage":   "✅ All articles saved to PostgreSQL",
-			"database_serving":  "✅ Frontend serves from database",
-			"api_conservation":  "✅ 80-90% reduction in API usage",
-			"instant_responses": "✅ Sub-second response times",
-			"otp_verification":  "✅ Email-based OTP system",
-			"email_templates":   "✅ Professional GoNews branding",
-			"rate_limiting":     "✅ OTP abuse prevention",
+			"type":               "Database-First News Aggregation",
+			"article_storage":    "✅ All articles saved to PostgreSQL",
+			"database_serving":   "✅ Frontend serves from database",
+			"api_conservation":   "✅ 80-90% reduction in API usage",
+			"instant_responses":  "✅ Sub-second response times",
+			"otp_verification":   "✅ Email-based OTP system",
+			"email_templates":    "✅ Professional GoNews branding",
+			"rate_limiting":      "✅ OTP abuse prevention",
+			"search_system":      "✅ PostgreSQL full-text search with ranking",
+			"search_analytics":   "✅ Search trends and performance tracking",
+			"india_optimization": "✅ India-specific search optimization",
+		},
+		"search_features": map[string]interface{}{
+			"full_text_search":      "✅ PostgreSQL ts_rank with highlight",
+			"intelligent_caching":   "✅ 30-50% cache hit rate target",
+			"search_suggestions":    "✅ Autocomplete and related terms",
+			"trending_analysis":     "✅ Popular and trending search topics",
+			"similar_articles":      "✅ Content similarity matching",
+			"category_filtering":    "✅ Multi-category search",
+			"performance_analytics": "✅ Search performance monitoring",
+			"india_keywords":        "✅ Indian cities, personalities, events",
+			"market_hours_aware":    "✅ IST timezone optimization",
+			"ipl_optimization":      "✅ Sports content during IPL season",
+		},
+		"search_endpoints": map[string]interface{}{
+			"main_search": []string{
+				"GET /api/v1/search - Main PostgreSQL full-text search",
+				"GET /api/v1/search/content - Content-based ranking",
+				"GET /api/v1/search/category - Category-specific search",
+			},
+			"suggestions": []string{
+				"GET /api/v1/search/suggestions - Autocomplete",
+				"GET /api/v1/search/popular - Popular search terms",
+				"GET /api/v1/search/trending - Trending topics",
+				"GET /api/v1/search/related - Related search terms",
+			},
+			"analytics": []string{
+				"GET /api/v1/search/analytics - Search analytics (auth)",
+				"GET /api/v1/search/performance - Performance stats (auth)",
+				"GET /api/v1/search/status - Service health (public)",
+			},
 		},
 		"otp_features": map[string]interface{}{
 			"registration_flow":   "✅ 3-step: register → verify OTP → complete",
@@ -408,7 +465,8 @@ func main() {
 		},
 		"live_integration":  "External APIs enabled with smart fallback ✅",
 		"india_strategy":    "75% Indian, 25% Global content ✅",
-		"performance_ready": "Database-first with OTP integration ✅",
+		"performance_ready": "Database-first with Search + OTP integration ✅",
+		"frontend_ready":    "Flutter search screen can now use PostgreSQL search ✅",
 	})
 
 	// Start server

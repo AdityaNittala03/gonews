@@ -15,7 +15,7 @@ import '../providers/news_providers.dart';
 
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 
-// ✅ FIXED: Use uniqueId throughout and handle nullable fields
+// ✅ ENHANCED: Added back navigation functionality for related articles
 
 class ArticleDetailScreen extends ConsumerStatefulWidget {
   final String articleId;
@@ -39,9 +39,17 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
   bool _showFab = false;
   bool _isRefreshing = false;
 
+  // ✅ NEW: Navigation history stack for related articles
+  List<String> _articleHistory = [];
+  int _currentHistoryIndex = -1;
+
   @override
   void initState() {
     super.initState();
+
+    // ✅ NEW: Initialize article history with current article
+    _articleHistory = [widget.articleId];
+    _currentHistoryIndex = 0;
 
     _scrollController = ScrollController();
     _fabAnimationController = AnimationController(
@@ -81,12 +89,31 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     super.dispose();
   }
 
+  // ✅ NEW: Get current article ID from history or widget
+  String get _currentArticleId {
+    if (_currentHistoryIndex >= 0 &&
+        _currentHistoryIndex < _articleHistory.length) {
+      return _articleHistory[_currentHistoryIndex];
+    }
+    return widget.articleId;
+  }
+
+  // ✅ NEW: Check if we can navigate back in article history
+  bool get _canNavigateBack {
+    return _currentHistoryIndex > 0;
+  }
+
+  // ✅ NEW: Check if we can navigate forward in article history
+  bool get _canNavigateForward {
+    return _currentHistoryIndex < _articleHistory.length - 1;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // ✅ FIXED: Use existing providers from news_providers.dart
-    final article = ref.watch(articleByIdProvider(widget.articleId));
+    // ✅ UPDATED: Use current article ID from history
+    final article = ref.watch(articleByIdProvider(_currentArticleId));
     final relatedArticles =
-        ref.watch(relatedArticlesProvider(widget.articleId));
+        ref.watch(relatedArticlesProvider(_currentArticleId));
 
     if (article == null) {
       return _buildArticleNotFound();
@@ -97,8 +124,14 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
       body: CustomScrollView(
         controller: _scrollController,
         slivers: [
-          // App Bar
+          // App Bar with enhanced navigation
           _buildSliverAppBar(article),
+
+          // ✅ NEW: Article navigation bar (if we have history)
+          if (_articleHistory.length > 1)
+            SliverToBoxAdapter(
+              child: _buildArticleNavigationBar(),
+            ),
 
           // Article Content
           SliverToBoxAdapter(
@@ -123,8 +156,22 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
       elevation: 0,
       backgroundColor: AppColors.primary,
       iconTheme: const IconThemeData(color: AppColors.white),
+      // ✅ UPDATED: Enhanced leading with back navigation
+      leading: IconButton(
+        onPressed: () {
+          if (_canNavigateBack) {
+            _navigateBackInHistory();
+          } else {
+            context.pop();
+          }
+        },
+        icon: Icon(
+          _canNavigateBack ? Icons.arrow_back : Icons.arrow_back_ios,
+          color: AppColors.white,
+        ),
+      ),
       actions: [
-        // ✅ FIXED: Use uniqueId for bookmark status
+        // Bookmark button
         Consumer(
           builder: (context, ref, child) {
             final isBookmarked =
@@ -138,16 +185,61 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
             );
           },
         ),
+        // Share button
         IconButton(
           onPressed: () => _shareArticle(article),
           icon: const Icon(Icons.share, color: AppColors.white),
         ),
+        // ✅ NEW: Navigation history button (if we have history)
+        if (_articleHistory.length > 1)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.history, color: AppColors.white),
+            onSelected: (articleId) => _navigateToArticleInHistory(articleId),
+            itemBuilder: (context) {
+              return _articleHistory.asMap().entries.map((entry) {
+                final index = entry.key;
+                final articleId = entry.value;
+                final historyArticle = ref.read(articleByIdProvider(articleId));
+                final isCurrentArticle = index == _currentHistoryIndex;
+
+                return PopupMenuItem<String>(
+                  value: articleId,
+                  child: Row(
+                    children: [
+                      Icon(
+                        isCurrentArticle
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        size: 16,
+                        color: isCurrentArticle
+                            ? AppColors.primary
+                            : AppColors.grey600,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          historyArticle?.title ?? 'Article ${index + 1}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: isCurrentArticle
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList();
+            },
+          ),
       ],
       flexibleSpace: FlexibleSpaceBar(
         background: Stack(
           fit: StackFit.expand,
           children: [
-            // ✅ FIXED: Use safeImageUrl
+            // Article image
             if (article.safeImageUrl.isNotEmpty)
               Image.network(
                 article.safeImageUrl,
@@ -203,7 +295,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      // ✅ FIXED: Use categoryDisplayName
                       article.categoryDisplayName.toUpperCase(),
                       style: const TextStyle(
                         color: AppColors.white,
@@ -233,7 +324,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        // ✅ FIXED: Use timeAgo extension method
                         article.timeAgo,
                         style: TextStyle(
                           color: AppColors.white.withOpacity(0.8),
@@ -248,7 +338,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        // ✅ FIXED: Use estimatedReadTime
                         '${article.estimatedReadTime} min read',
                         style: TextStyle(
                           color: AppColors.white.withOpacity(0.8),
@@ -262,6 +351,60 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // ✅ NEW: Article navigation bar widget
+  Widget _buildArticleNavigationBar() {
+    return Container(
+      color: AppColors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          // Back button
+          IconButton(
+            onPressed: _canNavigateBack ? _navigateBackInHistory : null,
+            icon: Icon(
+              Icons.arrow_back_ios,
+              color: _canNavigateBack ? AppColors.primary : AppColors.grey400,
+            ),
+            tooltip: 'Previous article',
+          ),
+
+          // Position indicator
+          Expanded(
+            child: Center(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryContainer.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  'Article ${_currentHistoryIndex + 1} of ${_articleHistory.length}',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // Forward button
+          IconButton(
+            onPressed: _canNavigateForward ? _navigateForwardInHistory : null,
+            icon: Icon(
+              Icons.arrow_forward_ios,
+              color:
+                  _canNavigateForward ? AppColors.primary : AppColors.grey400,
+            ),
+            tooltip: 'Next article',
+          ),
+        ],
       ),
     );
   }
@@ -280,7 +423,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                 radius: 20,
                 backgroundColor: AppColors.primaryContainer,
                 child: Text(
-                  // ✅ FIXED: Use safeAuthor
                   article.safeAuthor.isNotEmpty
                       ? article.safeAuthor[0].toUpperCase()
                       : 'A',
@@ -296,7 +438,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      // ✅ FIXED: Use safeAuthor
                       article.safeAuthor,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
@@ -317,7 +458,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
           const SizedBox(height: 24),
 
           // Article description
-          // ✅ FIXED: Use safeDescription and check if not empty
           if (article.safeDescription.isNotEmpty &&
               article.safeDescription != 'No description available')
             Container(
@@ -344,7 +484,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
 
           // Article content
           Text(
-            // ✅ FIXED: Use safeContent
             article.safeContent,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                   height: 1.8,
@@ -402,7 +541,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
           // Action buttons
           Consumer(
             builder: (context, ref, child) {
-              // ✅ FIXED: Use uniqueId for bookmark status
               final isBookmarked =
                   ref.watch(bookmarkStatusProvider(article.uniqueId));
               return Row(
@@ -465,10 +603,10 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
             separatorBuilder: (context, index) => const SizedBox(height: 16),
             itemBuilder: (context, index) {
               final relatedArticle = relatedArticles[index];
-              // ✅ FIXED: Remove showCompactView parameter
               return ArticleCard(
                 article: relatedArticle,
-                onTap: () => _navigateToArticle(relatedArticle),
+                // ✅ UPDATED: Use enhanced navigation
+                onTap: () => _navigateToRelatedArticle(relatedArticle),
                 onBookmark: () => _toggleBookmark(relatedArticle),
                 onShare: () => _shareArticle(relatedArticle),
               );
@@ -536,10 +674,60 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     );
   }
 
+  // ✅ ENHANCED Navigation methods
+
+  void _navigateToRelatedArticle(Article article) {
+    final newArticleId = article.uniqueId;
+
+    // Don't add if it's the same article
+    if (newArticleId == _currentArticleId) return;
+
+    setState(() {
+      // Remove any articles after current position (for new branch)
+      if (_currentHistoryIndex < _articleHistory.length - 1) {
+        _articleHistory = _articleHistory.sublist(0, _currentHistoryIndex + 1);
+      }
+
+      // Add new article to history
+      _articleHistory.add(newArticleId);
+      _currentHistoryIndex = _articleHistory.length - 1;
+    });
+
+    // Scroll to top for new article
+    _scrollToTop();
+  }
+
+  void _navigateBackInHistory() {
+    if (_canNavigateBack) {
+      setState(() {
+        _currentHistoryIndex--;
+      });
+      _scrollToTop();
+    }
+  }
+
+  void _navigateForwardInHistory() {
+    if (_canNavigateForward) {
+      setState(() {
+        _currentHistoryIndex++;
+      });
+      _scrollToTop();
+    }
+  }
+
+  void _navigateToArticleInHistory(String articleId) {
+    final index = _articleHistory.indexOf(articleId);
+    if (index != -1) {
+      setState(() {
+        _currentHistoryIndex = index;
+      });
+      _scrollToTop();
+    }
+  }
+
   // Action methods
   void _toggleBookmark(Article article) async {
     try {
-      // ✅ FIXED: Use newsServiceProvider and uniqueId
       final newsService = ref.read(newsServiceProvider);
       final articleIdentifier = article.uniqueId;
       final isCurrentlyBookmarked =
@@ -572,11 +760,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
 
   void _shareArticle(Article article) {
     _showInfoSnackbar('Share functionality coming soon!');
-  }
-
-  // ✅ FIXED: Use uniqueId for navigation
-  void _navigateToArticle(Article article) {
-    context.go('/article/${article.uniqueId}');
   }
 
   void _scrollToTop() {

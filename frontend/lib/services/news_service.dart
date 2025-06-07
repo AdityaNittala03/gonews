@@ -101,7 +101,7 @@ class NewsService {
     }
   }
 
-  /// Search news articles
+  /// Search news articles using PostgreSQL Full-Text Search
   Future<NewsResult> searchNews({
     required String query,
     int page = 1,
@@ -114,32 +114,47 @@ class NewsService {
     bool? onlyIndian,
   }) async {
     try {
-      final params = BackendAdapters.buildSearchRequest(
-        query: query,
-        page: page,
-        limit: limit,
-        categoryId: categoryId,
-        source: source,
-        sortBy: sortBy,
-        dateFrom: dateFrom,
-        dateTo: dateTo,
-        onlyIndian: onlyIndian,
-      );
+      // Build search parameters to match backend API exactly
+      final params = <String, dynamic>{
+        'query': query,
+        'page': page,
+        'limit': limit,
+        'enable_cache': true,
+        'enable_analytics': true,
+        'enable_suggestions': true,
+        'sort_by': sortBy ?? 'relevance',
+        'sort_order': 'desc',
+      };
 
+      // Add optional parameters
+      if (categoryId != null) params['category'] = categoryId;
+      if (source != null) params['source'] = source;
+      if (onlyIndian != null) params['is_indian_content'] = onlyIndian;
+      if (dateFrom != null) params['date_from'] = dateFrom;
+      if (dateTo != null) params['date_to'] = dateTo;
+
+      // Use the correct search endpoint
       final response = await _apiClient.get(
-        ApiEndpoints.searchNews,
+        ApiEndpoints.advancedSearch, // This points to /api/v1/search
         queryParameters: params,
         parser: (data) => data,
       );
 
       if (response.isSuccess) {
+        // Use the correct adapter that handles the nested {results: [{article: ...}]} structure
         final searchData =
-            BackendAdapters.searchResponseFromBackend(response.data);
+            BackendAdapters.advancedSearchResponseFromBackend(response.data);
+
         return NewsResult.success(
           articles: searchData['articles'] as List<Article>,
           pagination: searchData['pagination'] as Map<String, dynamic>,
           query: searchData['query'] as String,
           totalFound: searchData['total_found'] as int,
+          searchMetrics: searchData['search_metrics'] as Map<String, dynamic>?,
+          suggestions: searchData['suggestions'] as List<String>?,
+          relatedTerms: searchData['related_terms'] as List<String>?,
+          cacheHit: searchData['cache_hit'] as bool?,
+          processingTimeMs: searchData['processing_time_ms'] as int?,
         );
       } else {
         return NewsResult.error(message: response.message);
@@ -191,6 +206,172 @@ class NewsService {
           message: 'Failed to fetch categories: ${e.toString()}');
     }
   }
+
+  // ===============================
+  // ADVANCED SEARCH METHODS (NEW)
+  // ===============================
+
+  /// Get search suggestions using advanced search service
+  Future<List<String>> getSearchSuggestions({
+    required String prefix,
+    int limit = 10,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        ApiEndpoints.searchSuggestions,
+        queryParameters: {
+          'prefix': prefix,
+          'limit': limit,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final suggestions =
+            response.data['suggestions'] as List<dynamic>? ?? [];
+        return suggestions.map((s) => s.toString()).toList();
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('🔍 Failed to get search suggestions: $e');
+      }
+      return [];
+    }
+  }
+
+  /// Get popular search terms
+  Future<List<String>> getPopularSearchTerms({
+    int days = 7,
+    int limit = 10,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        ApiEndpoints.popularSearchTerms,
+        queryParameters: {
+          'days': days,
+          'limit': limit,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final terms = response.data['terms'] as List<dynamic>? ?? [];
+        return terms.map((t) => t.toString()).toList();
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('🔍 Failed to get popular search terms: $e');
+      }
+      return [];
+    }
+  }
+
+  /// Get trending topics
+  Future<List<Map<String, dynamic>>> getTrendingTopics({
+    int days = 7,
+    int limit = 10,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        ApiEndpoints.trendingTopics,
+        queryParameters: {
+          'days': days,
+          'limit': limit,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final topics = response.data['topics'] as List<dynamic>? ?? [];
+        return topics.map((t) => t as Map<String, dynamic>).toList();
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('🔍 Failed to get trending topics: $e');
+      }
+      return [];
+    }
+  }
+
+  /// Get related search terms
+  Future<List<String>> getRelatedSearchTerms({
+    required String query,
+    int limit = 10,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        ApiEndpoints.relatedSearchTerms,
+        queryParameters: {
+          'q': query,
+          'limit': limit,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final terms = response.data['terms'] as List<dynamic>? ?? [];
+        return terms.map((t) => t.toString()).toList();
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('🔍 Failed to get related search terms: $e');
+      }
+      return [];
+    }
+  }
+
+  /// Search similar articles (requires authentication)
+  Future<List<Article>> searchSimilarArticles({
+    required String articleId,
+    int limit = 5,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        ApiEndpoints.searchSimilarArticles(articleId),
+        queryParameters: {'limit': limit},
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final articles = response.data['articles'] as List<dynamic>? ?? [];
+        return BackendAdapters.articlesFromBackend(articles);
+      }
+      return [];
+    } catch (e) {
+      if (kDebugMode) {
+        print('🔍 Failed to get similar articles: $e');
+      }
+      return [];
+    }
+  }
+
+  /// Get search service status
+  Future<Map<String, dynamic>> getSearchServiceStatus() async {
+    try {
+      final response = await _apiClient.get(
+        ApiEndpoints.searchServiceStatus,
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        return response.data as Map<String, dynamic>;
+      }
+      return {'status': 'unknown'};
+    } catch (e) {
+      if (kDebugMode) {
+        print('🔍 Failed to get search service status: $e');
+      }
+      return {'status': 'error', 'error': e.toString()};
+    }
+  }
+
+  // ===============================
+  // BOOKMARK METHODS
+  // ===============================
 
   /// Add bookmark
   Future<BookmarkResult> addBookmark({
@@ -267,6 +448,13 @@ class NewsResult {
   final int? totalFound;
   final String message;
 
+  // Advanced search specific fields
+  final Map<String, dynamic>? searchMetrics;
+  final List<String>? suggestions;
+  final List<String>? relatedTerms;
+  final bool? cacheHit;
+  final int? processingTimeMs;
+
   const NewsResult._({
     required this.isSuccess,
     required this.articles,
@@ -275,6 +463,11 @@ class NewsResult {
     this.categories,
     this.query,
     this.totalFound,
+    this.searchMetrics,
+    this.suggestions,
+    this.relatedTerms,
+    this.cacheHit,
+    this.processingTimeMs,
   });
 
   factory NewsResult.success({
@@ -284,6 +477,11 @@ class NewsResult {
     String? query,
     int? totalFound,
     String? message,
+    Map<String, dynamic>? searchMetrics,
+    List<String>? suggestions,
+    List<String>? relatedTerms,
+    bool? cacheHit,
+    int? processingTimeMs,
   }) {
     return NewsResult._(
       isSuccess: true,
@@ -293,6 +491,11 @@ class NewsResult {
       categories: categories,
       query: query,
       totalFound: totalFound,
+      searchMetrics: searchMetrics,
+      suggestions: suggestions,
+      relatedTerms: relatedTerms,
+      cacheHit: cacheHit,
+      processingTimeMs: processingTimeMs,
     );
   }
 
@@ -309,6 +512,17 @@ class NewsResult {
   int get currentPage => pagination?['page'] ?? 1;
   int get totalPages => pagination?['total_pages'] ?? 1;
   int get total => pagination?['total'] ?? 0;
+
+  // Advanced search getters
+  bool get isAdvancedSearch => searchMetrics != null;
+  int get searchTimeMs => searchMetrics?['search_time_ms'] ?? 0;
+  String get indexUsed => searchMetrics?['index_used'] ?? '';
+  int get filtersApplied => searchMetrics?['filters_applied'] ?? 0;
+  double get avgRelevanceScore => searchMetrics?['avg_relevance_score'] ?? 0.0;
+  String get searchComplexity =>
+      searchMetrics?['search_complexity'] ?? 'simple';
+  bool get wasCacheHit => cacheHit ?? false;
+  int get responseTime => processingTimeMs ?? 0;
 }
 
 class CategoriesResult {
