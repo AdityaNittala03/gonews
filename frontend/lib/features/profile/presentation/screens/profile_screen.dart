@@ -1,6 +1,5 @@
 // frontend/lib/features/profile/presentation/screens/profile_screen.dart
-// CLEAN REBUILD: Removed dark mode, language settings, and non-functional read stats
-// FUNCTIONAL: Real authentication data, working bookmarks, donation functionality
+// UPDATED: Analytics Removed - Clean Profile Implementation
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,8 +10,6 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/color_constants.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
-import '../../../../core/providers/theme_provider.dart' as theme_provider;
-import '../../../../core/theme/app_theme.dart';
 import '../../../../services/auth_service.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -79,24 +76,31 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         opacity: _fadeAnimation,
         child: SlideTransition(
           position: _slideAnimation,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                _buildProfileHeader(authState),
-                const SizedBox(height: 32),
-                _buildStatsSection(bookmarkCount),
-                const SizedBox(height: 32),
-                _buildSettingsSection(),
-                const SizedBox(height: 32),
-                _buildAboutSection(),
-                const SizedBox(height: 32),
-                _buildDonationSection(),
-                const SizedBox(height: 32),
-                _buildSignOutButton(),
-                const SizedBox(height: 24),
-                _buildVersionInfo(),
-              ],
+          child: RefreshIndicator(
+            onRefresh: () async {
+              // Refresh bookmark count
+              ref.invalidate(bookmarkCountProvider);
+            },
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  _buildProfileHeader(authState),
+                  const SizedBox(height: 32),
+                  _buildStatsSection(bookmarkCount),
+                  const SizedBox(height: 32),
+                  _buildSettingsSection(),
+                  const SizedBox(height: 32),
+                  _buildAboutSection(),
+                  const SizedBox(height: 32),
+                  _buildDonationSection(),
+                  const SizedBox(height: 32),
+                  _buildSignOutButton(),
+                  const SizedBox(height: 24),
+                  _buildVersionInfo(),
+                ],
+              ),
             ),
           ),
         ),
@@ -105,7 +109,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   }
 
   Widget _buildProfileHeader(AuthState authState) {
-    // Extract user data from authentication state
     String userName = "Guest User";
     String userEmail = "guest@gonews.com";
     String userAvatar = "";
@@ -115,7 +118,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       userEmail = authState.userEmail.isNotEmpty
           ? authState.userEmail
           : "user@gonews.com";
-      // userAvatar remains empty for now - can be implemented later
     }
 
     return Container(
@@ -133,7 +135,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       ),
       child: Column(
         children: [
-          // Avatar
           Container(
             width: 80,
             height: 80,
@@ -163,10 +164,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                     ),
                   ),
           ),
-
           const SizedBox(height: 16),
-
-          // User Name
           Text(
             userName,
             style: Theme.of(context).textTheme.headlineSmall?.copyWith(
@@ -174,20 +172,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                   color: AppColors.textPrimary,
                 ),
           ),
-
           const SizedBox(height: 4),
-
-          // User Email
           Text(
             userEmail,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: AppColors.textSecondary,
                 ),
           ),
-
           const SizedBox(height: 16),
-
-          // Edit Profile Button
           CustomButton(
             text: 'Edit Profile',
             onPressed: _editProfile,
@@ -200,7 +192,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  // CLEAN STATS SECTION: Only shows working functionality
   Widget _buildStatsSection(int bookmarkCount) {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -216,79 +207,22 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Main bookmark stat - centered and prominent
+          Text(
+            'Your Activity',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+          ),
+          const SizedBox(height: 20),
           _buildMainStatItem(
             icon: Icons.bookmark,
             label: 'Saved Articles',
             value: bookmarkCount.toString(),
             color: AppColors.primary,
             onTap: () => context.push('/bookmarks'),
-          ),
-
-          const SizedBox(height: 20),
-
-          // Future features preview
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppColors.primary.withOpacity(0.05),
-                  AppColors.secondary.withOpacity(0.05)
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppColors.primary.withOpacity(0.1),
-                width: 1,
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.analytics_outlined,
-                    size: 18,
-                    color: AppColors.primary,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Reading Analytics Coming Soon!',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Track reading time, articles read, and more',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.arrow_forward_ios,
-                  size: 14,
-                  color: AppColors.textSecondary,
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -321,7 +255,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             width: 1,
           ),
         ),
-        child: Column(
+        child: Row(
           children: [
             Container(
               padding: const EdgeInsets.all(16),
@@ -335,21 +269,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                 size: 32,
               ),
             ),
-            const SizedBox(height: 16),
-            Text(
-              value,
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: color,
+            const SizedBox(width: 20),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    value,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: color,
+                        ),
                   ),
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: AppColors.textPrimary,
+                        ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
-                  ),
+            Icon(
+              Icons.arrow_forward_ios,
+              size: 16,
+              color: AppColors.textSecondary,
             ),
           ],
         ),
@@ -357,7 +303,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  // CLEAN SETTINGS SECTION: Removed dark mode and language
   Widget _buildSettingsSection() {
     return Container(
       decoration: BoxDecoration(
@@ -609,7 +554,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
     );
   }
 
-  // Action methods
   void _editProfile() {
     context.push('/edit-profile');
   }

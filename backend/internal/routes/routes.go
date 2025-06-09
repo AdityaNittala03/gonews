@@ -1,4 +1,4 @@
-// routes/routes.go - Updated with Search Integration + OTP Integration
+// routes/routes.go - Updated with Dashboard Integration + Search Integration + OTP Integration
 
 package routes
 
@@ -18,7 +18,7 @@ import (
 	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes with Search + OTP integration
+// SetupRoutes configures all application routes with Dashboard + Search + OTP integration
 func SetupRoutes(
 	app *fiber.App,
 	db *sqlx.DB,
@@ -30,7 +30,8 @@ func SetupRoutes(
 	newsService *services.NewsAggregatorService,
 	performanceService *services.PerformanceService,
 	cacheService *services.CacheService,
-	searchService *services.SearchService, // ADDED: Search service
+	searchService *services.SearchService,
+	quotaManager *services.QuotaManager, // ADDED: For dashboard integration
 ) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
@@ -54,6 +55,7 @@ func SetupRoutes(
 		finalCacheService       *services.CacheService
 		finalPerformanceService *services.PerformanceService
 		finalSearchService      *services.SearchService
+		finalQuotaManager       *services.QuotaManager
 	)
 
 	if newsService != nil {
@@ -76,6 +78,11 @@ func SetupRoutes(
 		log.Info("Using provided SearchService with PostgreSQL full-text search")
 	}
 
+	if quotaManager != nil {
+		finalQuotaManager = quotaManager
+		log.Info("Using provided QuotaManager for dashboard integration")
+	}
+
 	// Fallback initialization if services not provided
 	if finalCacheService == nil {
 		log.Info("Initializing fallback CacheService...")
@@ -85,18 +92,20 @@ func SetupRoutes(
 	if finalNewsService == nil {
 		log.Info("Initializing fallback NewsAggregatorService with database integration...")
 		apiClient := services.NewAPIClient(cfg, log)
-		quotaManager := services.NewQuotaManager(cfg, db, rdb, log)
+		if finalQuotaManager == nil {
+			finalQuotaManager = services.NewQuotaManager(cfg, db, rdb, log)
+		}
 		sqlDB := db.DB
 
 		finalNewsService = services.NewNewsAggregatorService(
-			sqlDB,        // *sql.DB
-			db,           // *sqlx.DB
-			rdb,          // *redis.Client
-			cfg,          // *config.Config
-			log,          // *logger.Logger
-			apiClient,    // *APIClient
-			quotaManager, // *QuotaManager
-			articleRepo,  // *repository.ArticleRepository
+			sqlDB,             // *sql.DB
+			db,                // *sqlx.DB
+			rdb,               // *redis.Client
+			cfg,               // *config.Config
+			log,               // *logger.Logger
+			apiClient,         // *APIClient
+			finalQuotaManager, // *QuotaManager
+			articleRepo,       // *repository.ArticleRepository
 		)
 		finalNewsService.SetCacheService(finalCacheService)
 		log.Info("Fallback NewsAggregatorService initialized with database-first architecture")
@@ -108,13 +117,30 @@ func SetupRoutes(
 		log.Info("Fallback SearchService initialized with PostgreSQL full-text search")
 	}
 
+	if finalQuotaManager == nil {
+		log.Info("Initializing fallback QuotaManager for dashboard...")
+		finalQuotaManager = services.NewQuotaManager(cfg, db, rdb, log)
+	}
+
 	// ===============================
-	// INITIALIZE HANDLERS WITH SEARCH + OTP SUPPORT
+	// INITIALIZE HANDLERS WITH DASHBOARD + SEARCH + OTP SUPPORT
 	// ===============================
 
 	// Enhanced auth handler with OTP services
 	authHandler := handlers.NewAuthHandler(authService, otpService, emailService, userRepo)
 	newsHandler := handlers.NewNewsHandler(finalNewsService, finalCacheService, cfg, log)
+
+	// NEW: Dashboard handler for API monitoring
+	dashboardHandler := handlers.NewDashboardHandler(
+		finalNewsService,
+		finalCacheService,
+		finalPerformanceService,
+		finalQuotaManager,
+		cfg,
+		log,
+		db,
+		rdb,
+	)
 
 	// Search handler with PostgreSQL full-text search
 	var searchHandler *handlers.SearchHandler
@@ -133,6 +159,7 @@ func SetupRoutes(
 	log.Info("All handlers initialized successfully", map[string]interface{}{
 		"auth_handler":         "✅ Enhanced with OTP verification",
 		"news_handler":         "✅",
+		"dashboard_handler":    "✅ API monitoring and debugging",
 		"search_handler":       searchHandler != nil,
 		"performance_handler":  performanceHandler != nil,
 		"advanced_features":    finalPerformanceService != nil,
@@ -140,6 +167,7 @@ func SetupRoutes(
 		"otp_integration":      "✅ Email OTP verification enabled",
 		"email_service":        "✅ Professional email templates",
 		"search_integration":   "✅ PostgreSQL full-text search enabled",
+		"dashboard_monitoring": "✅ Real-time API monitoring enabled",
 	})
 
 	// ===============================
@@ -148,18 +176,19 @@ func SetupRoutes(
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		features := fiber.Map{
-			"authentication":      true,
-			"news_aggregation":    true,
-			"search":              searchHandler != nil,
-			"postgresql_fulltext": searchHandler != nil,
-			"live_apis":           true,
-			"database_first":      true,
-			"article_storage":     true,
-			"advanced_features":   finalPerformanceService != nil,
-			"quota_conservation":  true,
-			"instant_responses":   true,
-			"otp_verification":    true,
-			"email_service":       true,
+			"authentication":       true,
+			"news_aggregation":     true,
+			"search":               searchHandler != nil,
+			"postgresql_fulltext":  searchHandler != nil,
+			"live_apis":            true,
+			"database_first":       true,
+			"article_storage":      true,
+			"advanced_features":    finalPerformanceService != nil,
+			"quota_conservation":   true,
+			"instant_responses":    true,
+			"otp_verification":     true,
+			"email_service":        true,
+			"dashboard_monitoring": true,
 		}
 
 		return c.JSON(fiber.Map{
@@ -167,7 +196,7 @@ func SetupRoutes(
 			"service":      "gonews-api",
 			"version":      "1.0.0",
 			"checkpoint":   determineCheckpoint(finalPerformanceService != nil),
-			"architecture": "Database-First News Aggregation with PostgreSQL Search + OTP Verification",
+			"architecture": "Database-First News Aggregation with Dashboard Monitoring + PostgreSQL Search + OTP Verification",
 			"features":     features,
 			"timestamp":    time.Now().Format(time.RFC3339),
 		})
@@ -194,6 +223,10 @@ func SetupRoutes(
 		log.Info("Search routes configured ✅")
 	}
 
+	// NEW: Dashboard routes for API monitoring (Admin only)
+	setupDashboardRoutes(api, dashboardHandler, jwtManager)
+	log.Info("Dashboard routes configured ✅")
+
 	// Advanced features routes (conditional)
 	if performanceHandler != nil {
 		setupPerformanceRoutes(api, performanceHandler, jwtManager)
@@ -208,22 +241,90 @@ func SetupRoutes(
 	if searchHandler != nil {
 		setupSearchHealthRoutes(app, searchHandler)
 	}
+	setupDashboardHealthRoutes(app, dashboardHandler)
 
 	// Protected routes (require authentication)
 	setupProtectedRoutes(api, jwtManager)
 
 	log.Info("All routes configured successfully", map[string]interface{}{
-		"public_routes":         "✅",
-		"auth_routes":           "✅ Enhanced with OTP verification",
-		"news_routes":           "✅ Database-first enabled",
-		"search_routes":         searchHandler != nil,
-		"performance_routes":    performanceHandler != nil,
-		"protected_routes":      "✅",
-		"health_routes":         "✅",
-		"advanced_integration":  finalPerformanceService != nil,
-		"database_architecture": "✅ Articles served from PostgreSQL",
-		"otp_integration":       "✅ Complete OTP workflow enabled",
-		"search_integration":    "✅ PostgreSQL full-text search enabled",
+		"public_routes":          "✅",
+		"auth_routes":            "✅ Enhanced with OTP verification",
+		"news_routes":            "✅ Database-first enabled",
+		"search_routes":          searchHandler != nil,
+		"dashboard_routes":       "✅ API monitoring and debugging",
+		"performance_routes":     performanceHandler != nil,
+		"protected_routes":       "✅",
+		"health_routes":          "✅",
+		"advanced_integration":   finalPerformanceService != nil,
+		"database_architecture":  "✅ Articles served from PostgreSQL",
+		"otp_integration":        "✅ Complete OTP workflow enabled",
+		"search_integration":     "✅ PostgreSQL full-text search enabled",
+		"monitoring_integration": "✅ Real-time dashboard monitoring enabled",
+	})
+}
+
+// ===============================
+// NEW: DASHBOARD ROUTES SETUP
+// ===============================
+
+// setupDashboardRoutes configures dashboard monitoring routes (Admin only)
+func setupDashboardRoutes(api fiber.Router, dashboardHandler *handlers.DashboardHandler, jwtManager *auth.JWTManager) {
+	// Create admin dashboard group - requires authentication + admin role
+	dashboard := api.Group("/admin/dashboard")
+	dashboard.Use(middleware.AuthMiddleware(jwtManager))
+	dashboard.Use(middleware.AdminMiddleware())
+
+	// ===============================
+	// CORE DASHBOARD ENDPOINTS
+	// ===============================
+
+	// Dashboard metrics endpoint - comprehensive system metrics
+	dashboard.Get("/metrics", dashboardHandler.GetDashboardMetrics)
+
+	// Dashboard logs endpoint - real-time logs for debugging
+	dashboard.Get("/logs", dashboardHandler.GetDashboardLogs)
+
+	// Dashboard health endpoint - comprehensive health status
+	dashboard.Get("/health", dashboardHandler.GetDashboardHealth)
+
+	// ===============================
+	// ADDITIONAL MONITORING ENDPOINTS
+	// ===============================
+
+	// API status overview
+	dashboard.Get("/api-status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message": "API status overview endpoint",
+			"status":  "active",
+			"apis": map[string]interface{}{
+				"newsdata_io": "monitoring",
+				"gnews":       "monitoring",
+				"mediastack":  "monitoring",
+				"rapidapi":    "monitoring",
+			},
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// System performance overview
+	dashboard.Get("/performance", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message":    "System performance overview",
+			"status":     "monitoring",
+			"components": []string{"database", "cache", "apis", "memory", "goroutines"},
+			"timestamp":  time.Now().Format(time.RFC3339),
+		})
+	})
+
+	// Real-time statistics
+	dashboard.Get("/stats/realtime", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"message":     "Real-time statistics endpoint",
+			"status":      "active",
+			"update_rate": "30 seconds",
+			"data_points": []string{"requests", "cache_hits", "api_calls", "errors"},
+			"timestamp":   time.Now().Format(time.RFC3339),
+		})
 	})
 }
 
@@ -234,8 +335,8 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 		return c.JSON(fiber.Map{
 			"api_version":  "1.0.0",
 			"status":       "operational",
-			"checkpoint":   "Search Integration Complete",
-			"architecture": "Database-First News Aggregation with PostgreSQL Search + OTP Verification",
+			"checkpoint":   "Dashboard Integration Complete",
+			"architecture": "Database-First News Aggregation with Dashboard Monitoring + PostgreSQL Search + OTP Verification",
 			"features": fiber.Map{
 				"authentication":         true,
 				"news_aggregation":       true,
@@ -254,6 +355,7 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"advanced_optimization":  true,
 				"otp_verification":       true,
 				"email_service":          true,
+				"dashboard_monitoring":   true,
 			},
 			"api_sources": fiber.Map{
 				"newsdata_io": "active (database-first fallback)",
@@ -273,6 +375,12 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"email_templates":  "professional",
 				"rate_limiting":    "enabled",
 				"jwt_auth":         "enabled",
+			},
+			"monitoring": fiber.Map{
+				"dashboard":            "enabled",
+				"real_time_logs":       "enabled",
+				"api_health":           "enabled",
+				"performance_tracking": "enabled",
 			},
 		})
 	})
@@ -651,6 +759,10 @@ func setupNewsRoutes(api fiber.Router, newsHandler *handlers.NewsHandler, jwtMan
 	adminNews.Get("/admin/api-status", newsHandler.APISourcesHealthCheck)
 }
 
+// ===============================
+// HEALTH CHECK ROUTES SETUP
+// ===============================
+
 // setupNewsHealthRoutes sets up comprehensive health check endpoints
 func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 	// Basic health checks
@@ -763,6 +875,24 @@ func setupPerformanceHealthRoutes(app *fiber.App, performanceHandler *handlers.P
 	})
 }
 
+// NEW: setupDashboardHealthRoutes sets up dashboard health check endpoints
+func setupDashboardHealthRoutes(app *fiber.App, dashboardHandler *handlers.DashboardHandler) {
+	// Dashboard health check
+	app.Get("/health/dashboard", dashboardHandler.GetDashboardHealth)
+
+	// Dashboard system status
+	app.Get("/health/dashboard/system", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":               "healthy",
+			"monitoring":           "active",
+			"real_time_logs":       "enabled",
+			"api_tracking":         "enabled",
+			"performance_tracking": "enabled",
+			"last_check":           time.Now().Format(time.RFC3339),
+		})
+	})
+}
+
 // setupProtectedRoutes configures routes that require authentication
 func setupProtectedRoutes(api fiber.Router, jwtManager *auth.JWTManager) {
 	// Protected routes group - requires authentication
@@ -863,9 +993,9 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 // determineCheckpoint returns the current checkpoint based on features available
 func determineCheckpoint(hasAdvancedFeatures bool) string {
 	if hasAdvancedFeatures {
-		return "6 - Search Integration Complete (Database-First + PostgreSQL Search + OTP)"
+		return "Dashboard Integration Complete (Database-First + Dashboard Monitoring + PostgreSQL Search + OTP)"
 	}
-	return "Search Integration Complete"
+	return "Dashboard Integration Complete"
 }
 
 // ===============================
@@ -878,4 +1008,41 @@ type RouteInfo struct {
 	Path        string `json:"path"`
 	Description string `json:"description"`
 	AuthLevel   string `json:"auth_level"`
+}
+
+// GetAllRoutes returns documentation for all available routes
+func GetAllRoutes() []RouteInfo {
+	return []RouteInfo{
+		// Dashboard Routes (NEW)
+		{Method: "GET", Path: "/api/v1/admin/dashboard/metrics", Description: "Get comprehensive system metrics for dashboard", AuthLevel: "admin"},
+		{Method: "GET", Path: "/api/v1/admin/dashboard/logs", Description: "Get real-time logs for debugging", AuthLevel: "admin"},
+		{Method: "GET", Path: "/api/v1/admin/dashboard/health", Description: "Get comprehensive health status", AuthLevel: "admin"},
+		{Method: "GET", Path: "/api/v1/admin/dashboard/api-status", Description: "Get API status overview", AuthLevel: "admin"},
+		{Method: "GET", Path: "/api/v1/admin/dashboard/performance", Description: "Get system performance overview", AuthLevel: "admin"},
+		{Method: "GET", Path: "/api/v1/admin/dashboard/stats/realtime", Description: "Get real-time statistics", AuthLevel: "admin"},
+
+		// Authentication Routes
+		{Method: "POST", Path: "/api/v1/auth/register", Description: "Start registration with OTP", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/login", Description: "User login", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/auth/me", Description: "Get current user profile", AuthLevel: "authenticated"},
+
+		// News Routes
+		{Method: "GET", Path: "/api/v1/news", Description: "Get main news feed (database-first)", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/category/:category", Description: "Get category-specific news", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/search", Description: "Search news articles", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/trending", Description: "Get trending news", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/categories", Description: "Get available categories", AuthLevel: "public"},
+
+		// Search Routes
+		{Method: "GET", Path: "/api/v1/search", Description: "PostgreSQL full-text search", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/suggestions", Description: "Get search suggestions", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/trending", Description: "Get trending search terms", AuthLevel: "public"},
+
+		// Health Check Routes
+		{Method: "GET", Path: "/health", Description: "Basic health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/dashboard", Description: "Dashboard health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/news", Description: "News service health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/database", Description: "Database health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/cache", Description: "Cache health check", AuthLevel: "public"},
+	}
 }

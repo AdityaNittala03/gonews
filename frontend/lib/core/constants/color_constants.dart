@@ -88,6 +88,9 @@ class AppColors {
   static const Color twitter = Color(0xFF1DA1F2);
   static const Color whatsapp = Color(0xFF25D366);
 
+  // Add these if missing:
+  static const Color accent = Color(0xFFFFC107);
+
   // Category Color Map
   static const Map<String, Color> categoryColors = {
     'all': allCategoryColor,

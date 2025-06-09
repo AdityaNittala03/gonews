@@ -1,5 +1,5 @@
 // internal/models/news.go
-// GoNews Phase 2 - Checkpoint 3: News Aggregation Models - RapidAPI Dominant Strategy
+// GoNews Phase 2 - GDELT Integration: Enhanced News Models with Academic-Grade Data Support
 package models
 
 import (
@@ -12,7 +12,7 @@ import (
 )
 
 // ===============================
-// ENTITY MODELS (Database) - EXISTING
+// ENTITY MODELS (Database) - ENHANCED WITH GDELT SUPPORT
 // ===============================
 
 // Category represents a news category entity
@@ -29,7 +29,7 @@ type Category struct {
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// Article represents a news article entity
+// Article represents a news article entity (enhanced for GDELT)
 type Article struct {
 	ID          int       `json:"id" db:"id"`
 	ExternalID  *string   `json:"external_id" db:"external_id"`
@@ -45,14 +45,21 @@ type Article struct {
 	FetchedAt   time.Time `json:"fetched_at" db:"fetched_at"`
 
 	// India-specific fields
-	IsIndianContent bool    `json:"is_indian_content" db:"is_indian_content"`
+	IsIndianContent bool    `json:"is_indian" db:"is_indian_content"`
 	RelevanceScore  float64 `json:"relevance_score" db:"relevance_score"`
-	SentimentScore  float64 `json:"sentiment_score" db:"sentiment_score"`
+	SentimentScore  float64 `json:"sentiment_score" db:"sentiment_score"` // Enhanced: GDELT provides sentiment
 
 	// Content analysis
 	WordCount          int            `json:"word_count" db:"word_count"`
 	ReadingTimeMinutes int            `json:"reading_time_minutes" db:"reading_time_minutes"`
-	Tags               pq.StringArray `json:"tags" db:"tags"`
+	Tags               pq.StringArray `json:"tags" db:"tags"` // Enhanced: GDELT provides themes/organizations
+
+	// NEW: GDELT-specific fields (stored as metadata)
+	GDELTTone          *float64       `json:"gdelt_tone,omitempty" db:"gdelt_tone"`                   // GDELT tone score
+	GDELTThemes        pq.StringArray `json:"gdelt_themes,omitempty" db:"gdelt_themes"`               // GDELT themes
+	GDELTOrganizations pq.StringArray `json:"gdelt_organizations,omitempty" db:"gdelt_organizations"` // GDELT organizations
+	GDELTPersons       pq.StringArray `json:"gdelt_persons,omitempty" db:"gdelt_persons"`             // GDELT persons
+	GDELTLocations     pq.StringArray `json:"gdelt_locations,omitempty" db:"gdelt_locations"`         // GDELT locations
 
 	// SEO and metadata
 	MetaTitle       *string `json:"meta_title" db:"meta_title"`
@@ -102,10 +109,10 @@ type ReadingHistory struct {
 	Article *Article `json:"article,omitempty"`
 }
 
-// APIUsage tracks external API consumption
+// APIUsage tracks external API consumption (enhanced for GDELT)
 type APIUsage struct {
 	ID             int     `json:"id" db:"id"`
-	APISource      string  `json:"api_source" db:"api_source"`
+	APISource      string  `json:"api_source" db:"api_source"` // Now includes "gdelt"
 	Endpoint       *string `json:"endpoint" db:"endpoint"`
 	RequestCount   int     `json:"request_count" db:"request_count"`
 	SuccessCount   int     `json:"success_count" db:"success_count"`
@@ -244,13 +251,15 @@ type CategoryResponse struct {
 	Categories []Category `json:"categories"`
 }
 
-// ArticleStatsResponse represents article statistics
+// ArticleStatsResponse represents article statistics (enhanced for GDELT)
 type ArticleStatsResponse struct {
 	TotalArticles    int `json:"total_articles"`
 	IndianArticles   int `json:"indian_articles"`
 	GlobalArticles   int `json:"global_articles"`
 	TodayArticles    int `json:"today_articles"`
 	FeaturedArticles int `json:"featured_articles"`
+	GDELTArticles    int `json:"gdelt_articles"`   // NEW: GDELT article count
+	GDELTPercentage  int `json:"gdelt_percentage"` // NEW: GDELT percentage
 }
 
 // PaginationResponse represents pagination metadata
@@ -264,10 +273,10 @@ type PaginationResponse struct {
 }
 
 // ===============================
-// EXTERNAL API MODELS - EXISTING
+// EXTERNAL API MODELS - ENHANCED WITH GDELT
 // ===============================
 
-// ExternalArticle represents raw article from external APIs
+// ExternalArticle represents raw article from external APIs (enhanced for GDELT)
 type ExternalArticle struct {
 	ID          *string   `json:"id"`
 	Title       string    `json:"title"`
@@ -281,9 +290,16 @@ type ExternalArticle struct {
 	PublishedAt time.Time `json:"published_at"`
 	Language    *string   `json:"language"`
 	Country     *string   `json:"country"`
+
+	// NEW: GDELT-specific fields
+	GDELTTone          *float64 `json:"gdelt_tone,omitempty"`          // GDELT tone/sentiment
+	GDELTThemes        []string `json:"gdelt_themes,omitempty"`        // GDELT themes
+	GDELTOrganizations []string `json:"gdelt_organizations,omitempty"` // GDELT organizations
+	GDELTPersons       []string `json:"gdelt_persons,omitempty"`       // GDELT persons mentioned
+	GDELTLocations     []string `json:"gdelt_locations,omitempty"`     // GDELT locations
 }
 
-// APIQuota represents current API usage quota
+// APIQuota represents current API usage quota (enhanced for GDELT)
 type APIQuota struct {
 	Source     string    `json:"source"`
 	Used       int       `json:"used"`
@@ -294,20 +310,21 @@ type APIQuota struct {
 }
 
 // ===============================
-// NEW: RAPIDAPI DOMINANT STRATEGY MODELS
+// UPDATED: API SOURCE STRATEGY WITH GDELT INTEGRATION
 // ===============================
 
-// APISourceType represents different API source types
+// APISourceType represents different API source types (enhanced with GDELT)
 type APISourceType string
 
 const (
-	APISourceRapidAPI   APISourceType = "rapidapi"   // Primary: 15,000/day
-	APISourceNewsData   APISourceType = "newsdata"   // Secondary: 150/day
-	APISourceGNews      APISourceType = "gnews"      // Tertiary: 75/day
-	APISourceMediastack APISourceType = "mediastack" // Emergency: 12/day
+	APISourceGDELT      APISourceType = "gdelt"      // NEW PRIMARY: 24,000/day (FREE!)
+	APISourceRapidAPI   APISourceType = "rapidapi"   // SECONDARY: 15,000/day
+	APISourceNewsData   APISourceType = "newsdata"   // TERTIARY: 150/day
+	APISourceGNews      APISourceType = "gnews"      // QUATERNARY: 75/day
+	APISourceMediastack APISourceType = "mediastack" // EMERGENCY: 12/day
 )
 
-// APIQuotaConfig represents the corrected API quota configuration
+// APIQuotaConfig represents the enhanced API quota configuration with GDELT
 type APIQuotaConfig struct {
 	Source          APISourceType `json:"source"`
 	DailyLimit      int           `json:"daily_limit"`
@@ -317,60 +334,76 @@ type APIQuotaConfig struct {
 	IsActive        bool          `json:"is_active"`
 	IndianPercent   int           `json:"indian_percent"` // % for Indian content
 	GlobalPercent   int           `json:"global_percent"` // % for global content
+	IsFree          bool          `json:"is_free"`        // NEW: Track free vs paid APIs
 }
 
-// GetAPIQuotaConfig returns the corrected RapidAPI-dominant configuration
+// GetAPIQuotaConfig returns the enhanced GDELT-first configuration
 func GetAPIQuotaConfig() map[APISourceType]APIQuotaConfig {
 	return map[APISourceType]APIQuotaConfig{
+		APISourceGDELT: {
+			Source:          APISourceGDELT,
+			DailyLimit:      24000, // 1000/hour * 24 hours
+			HourlyLimit:     1000,  // Reasonable usage limit
+			ConservativeUse: 24000, // No need to be conservative - it's free!
+			Priority:        1,     // NEW HIGHEST PRIORITY
+			IsActive:        true,
+			IndianPercent:   75,   // 18,000 requests for Indian content
+			GlobalPercent:   25,   // 6,000 requests for global content
+			IsFree:          true, // Completely free!
+		},
 		APISourceRapidAPI: {
 			Source:          APISourceRapidAPI,
 			DailyLimit:      16667, // 500K/month ÷ 30 days
 			HourlyLimit:     1000,  // RapidAPI platform limit
 			ConservativeUse: 15000, // Conservative daily usage
-			Priority:        1,     // Highest priority - PRIMARY
+			Priority:        2,     // MOVED TO SECONDARY
 			IsActive:        true,
 			IndianPercent:   75, // 11,250 requests for Indian content
 			GlobalPercent:   25, // 3,750 requests for global content
+			IsFree:          false,
 		},
 		APISourceNewsData: {
 			Source:          APISourceNewsData,
 			DailyLimit:      200,
 			HourlyLimit:     200, // No hourly restriction
 			ConservativeUse: 150,
-			Priority:        2, // Secondary - specialized Indian content
+			Priority:        3, // TERTIARY
 			IsActive:        true,
 			IndianPercent:   80, // 120 requests for Indian content
 			GlobalPercent:   20, // 30 requests for global content
+			IsFree:          false,
 		},
 		APISourceGNews: {
 			Source:          APISourceGNews,
 			DailyLimit:      100,
 			HourlyLimit:     100, // No hourly restriction
 			ConservativeUse: 75,
-			Priority:        3, // Tertiary - breaking news
+			Priority:        4, // QUATERNARY
 			IsActive:        true,
 			IndianPercent:   60, // 45 requests for Indian content
 			GlobalPercent:   40, // 30 requests for global content
+			IsFree:          false,
 		},
 		APISourceMediastack: {
 			Source:          APISourceMediastack,
 			DailyLimit:      16, // 500/month ÷ 30 days
 			HourlyLimit:     16, // No hourly restriction
 			ConservativeUse: 12,
-			Priority:        4, // Emergency backup only
+			Priority:        5, // EMERGENCY BACKUP
 			IsActive:        true,
 			IndianPercent:   75, // 9 requests for Indian content
 			GlobalPercent:   25, // 3 requests for global content
+			IsFree:          false,
 		},
 	}
 }
 
-// GetPrimaryAPISource returns RapidAPI as the dominant primary source
+// GetPrimaryAPISource returns GDELT as the new primary source
 func GetPrimaryAPISource() APISourceType {
-	return APISourceRapidAPI
+	return APISourceGDELT
 }
 
-// GetTotalDailyQuota returns total daily quota across all APIs
+// GetTotalDailyQuota returns total daily quota across all APIs (massively increased!)
 func GetTotalDailyQuota() int {
 	configs := GetAPIQuotaConfig()
 	total := 0
@@ -379,108 +412,193 @@ func GetTotalDailyQuota() int {
 			total += config.ConservativeUse
 		}
 	}
-	return total // Should be ~15,237 requests/day
+	return total // Should be ~39,237 requests/day (62% increase!)
 }
 
-// CategoryRequestDistribution represents request distribution per category for RapidAPI
+// GetFreeAPIQuota returns quota from free APIs (GDELT)
+func GetFreeAPIQuota() int {
+	configs := GetAPIQuotaConfig()
+	freeQuota := 0
+	for _, config := range configs {
+		if config.IsActive && config.IsFree {
+			freeQuota += config.ConservativeUse
+		}
+	}
+	return freeQuota // 24,000/day from GDELT
+}
+
+// GetPaidAPIQuota returns quota from paid APIs
+func GetPaidAPIQuota() int {
+	configs := GetAPIQuotaConfig()
+	paidQuota := 0
+	for _, config := range configs {
+		if config.IsActive && !config.IsFree {
+			paidQuota += config.ConservativeUse
+		}
+	}
+	return paidQuota // ~15,237/day from paid APIs
+}
+
+// CategoryRequestDistribution represents request distribution per category (enhanced for GDELT)
 type CategoryRequestDistribution struct {
-	CategoryName    string `json:"category_name"`
-	RequestsPerDay  int    `json:"requests_per_day"`
-	PercentageTotal int    `json:"percentage_total"`
-	IsIndianFocus   bool   `json:"is_indian_focus"`
+	CategoryName     string `json:"category_name"`
+	RequestsPerDay   int    `json:"requests_per_day"`
+	PercentageTotal  int    `json:"percentage_total"`
+	IsIndianFocus    bool   `json:"is_indian_focus"`
+	GDELTRequests    int    `json:"gdelt_requests"`    // NEW: GDELT allocation
+	RapidAPIRequests int    `json:"rapidapi_requests"` // RapidAPI allocation
 }
 
-// GetRapidAPICategoryDistribution returns the category-wise request distribution for RapidAPI
-func GetRapidAPICategoryDistribution() []CategoryRequestDistribution {
+// GetGDELTCategoryDistribution returns GDELT-specific category distribution
+func GetGDELTCategoryDistribution() []CategoryRequestDistribution {
 	return []CategoryRequestDistribution{
-		{CategoryName: "politics", RequestsPerDay: 2250, PercentageTotal: 15, IsIndianFocus: true},
-		{CategoryName: "business", RequestsPerDay: 2250, PercentageTotal: 15, IsIndianFocus: true},
-		{CategoryName: "sports", RequestsPerDay: 1875, PercentageTotal: 12, IsIndianFocus: true}, // 12.5% rounded
-		{CategoryName: "technology", RequestsPerDay: 1500, PercentageTotal: 10, IsIndianFocus: true},
-		{CategoryName: "entertainment", RequestsPerDay: 1125, PercentageTotal: 7, IsIndianFocus: true}, // 7.5% rounded
-		{CategoryName: "health", RequestsPerDay: 750, PercentageTotal: 5, IsIndianFocus: true},
-		{CategoryName: "regional", RequestsPerDay: 750, PercentageTotal: 5, IsIndianFocus: true},
-		{CategoryName: "breaking", RequestsPerDay: 750, PercentageTotal: 5, IsIndianFocus: true},
-		{CategoryName: "international", RequestsPerDay: 1950, PercentageTotal: 13, IsIndianFocus: false}, // Global business + tech + politics
-		{CategoryName: "world_sports", RequestsPerDay: 600, PercentageTotal: 4, IsIndianFocus: false},
-		{CategoryName: "global_health", RequestsPerDay: 450, PercentageTotal: 3, IsIndianFocus: false},
-		{CategoryName: "markets", RequestsPerDay: 150, PercentageTotal: 1, IsIndianFocus: false},
+		{CategoryName: "politics", RequestsPerDay: 6000, PercentageTotal: 25, IsIndianFocus: true, GDELTRequests: 6000},     // 25% of GDELT
+		{CategoryName: "business", RequestsPerDay: 4800, PercentageTotal: 20, IsIndianFocus: true, GDELTRequests: 4800},     // 20% of GDELT
+		{CategoryName: "sports", RequestsPerDay: 3600, PercentageTotal: 15, IsIndianFocus: true, GDELTRequests: 3600},       // 15% of GDELT
+		{CategoryName: "technology", RequestsPerDay: 2400, PercentageTotal: 10, IsIndianFocus: true, GDELTRequests: 2400},   // 10% of GDELT
+		{CategoryName: "health", RequestsPerDay: 1800, PercentageTotal: 7, IsIndianFocus: true, GDELTRequests: 1800},        // 7.5% of GDELT
+		{CategoryName: "entertainment", RequestsPerDay: 1800, PercentageTotal: 7, IsIndianFocus: true, GDELTRequests: 1800}, // 7.5% of GDELT
+		{CategoryName: "breaking", RequestsPerDay: 1200, PercentageTotal: 5, IsIndianFocus: true, GDELTRequests: 1200},      // 5% of GDELT
+		{CategoryName: "general", RequestsPerDay: 2400, PercentageTotal: 10, IsIndianFocus: false, GDELTRequests: 2400},     // 10% of GDELT
 	}
 }
 
-// RapidAPINewsRequest represents requests to RapidAPI news sources
-type RapidAPINewsRequest struct {
-	Query          string `json:"q"`
-	Country        string `json:"country"`
-	Category       string `json:"category"`
-	Language       string `json:"language"`
-	Max            int    `json:"max"`
-	Offset         int    `json:"offset"`
-	SortBy         string `json:"sortby"`
-	Sources        string `json:"sources"`
-	ExcludeSources string `json:"excludeSources"`
-}
-
-// RapidAPINewsResponse represents responses from RapidAPI news sources
-type RapidAPINewsResponse struct {
-	Status       string            `json:"status"`
-	TotalResults int               `json:"totalResults"`
-	Articles     []RapidAPIArticle `json:"articles"`
-	Message      string            `json:"message,omitempty"`
-}
-
-// RapidAPIArticle represents an article from RapidAPI sources
-type RapidAPIArticle struct {
-	Source      RapidAPISource `json:"source"`
-	Author      *string        `json:"author"`
-	Title       string         `json:"title"`
-	Description *string        `json:"description"`
-	URL         string         `json:"url"`
-	URLToImage  *string        `json:"urlToImage"`
-	PublishedAt string         `json:"publishedAt"`
-	Content     *string        `json:"content"`
-}
-
-// RapidAPISource represents the source information from RapidAPI
-type RapidAPISource struct {
-	ID   *string `json:"id"`
-	Name string  `json:"name"`
+// GetRapidAPICategoryDistribution returns the category-wise request distribution for RapidAPI (updated)
+func GetRapidAPICategoryDistribution() []CategoryRequestDistribution {
+	return []CategoryRequestDistribution{
+		{CategoryName: "politics", RequestsPerDay: 2250, PercentageTotal: 15, IsIndianFocus: true, RapidAPIRequests: 2250},
+		{CategoryName: "business", RequestsPerDay: 2250, PercentageTotal: 15, IsIndianFocus: true, RapidAPIRequests: 2250},
+		{CategoryName: "sports", RequestsPerDay: 1875, PercentageTotal: 12, IsIndianFocus: true, RapidAPIRequests: 1875},
+		{CategoryName: "technology", RequestsPerDay: 1500, PercentageTotal: 10, IsIndianFocus: true, RapidAPIRequests: 1500},
+		{CategoryName: "entertainment", RequestsPerDay: 1125, PercentageTotal: 7, IsIndianFocus: true, RapidAPIRequests: 1125},
+		{CategoryName: "health", RequestsPerDay: 750, PercentageTotal: 5, IsIndianFocus: true, RapidAPIRequests: 750},
+		{CategoryName: "regional", RequestsPerDay: 750, PercentageTotal: 5, IsIndianFocus: true, RapidAPIRequests: 750},
+		{CategoryName: "breaking", RequestsPerDay: 750, PercentageTotal: 5, IsIndianFocus: true, RapidAPIRequests: 750},
+		{CategoryName: "international", RequestsPerDay: 1950, PercentageTotal: 13, IsIndianFocus: false, RapidAPIRequests: 1950},
+		{CategoryName: "world_sports", RequestsPerDay: 600, PercentageTotal: 4, IsIndianFocus: false, RapidAPIRequests: 600},
+		{CategoryName: "global_health", RequestsPerDay: 450, PercentageTotal: 3, IsIndianFocus: false, RapidAPIRequests: 450},
+		{CategoryName: "markets", RequestsPerDay: 150, PercentageTotal: 1, IsIndianFocus: false, RapidAPIRequests: 150},
+	}
 }
 
 // ===============================
-// UPDATED: CACHE TTL CONFIGURATION FOR REAL-TIME STRATEGY
+// NEW: GDELT-SPECIFIC MODELS
 // ===============================
 
-// CacheTTLConfig represents TTL configuration for real-time content strategy
+// GDELTNewsRequest represents requests to GDELT API
+type GDELTNewsRequest struct {
+	Query         string `json:"query"`
+	Mode          string `json:"mode"`          // "artlist" for article list
+	Format        string `json:"format"`        // "json"
+	MaxRecords    int    `json:"maxrecords"`    // Max articles to return
+	TimeSpan      string `json:"timespan"`      // "3d" for last 3 days
+	SourceCountry string `json:"sourcecountry"` // "IN" for India
+	SourceLang    string `json:"sourcelang"`    // "eng" for English
+	SortBy        string `json:"sortby"`        // "DateDesc" for latest first
+}
+
+// GDELTNewsResponse represents responses from GDELT API
+type GDELTNewsResponse struct {
+	Articles []GDELTArticleDetail `json:"articles"`
+}
+
+// GDELTArticleDetail represents a detailed article from GDELT API
+type GDELTArticleDetail struct {
+	URL            string          `json:"url"`
+	URLMobile      string          `json:"urlmobile"`
+	Title          string          `json:"title"`
+	Domain         string          `json:"domain"`
+	Language       string          `json:"language"`
+	SourceCountry  string          `json:"sourcecountry"`
+	PublishDate    string          `json:"publishdate"` // Format: YYYYMMDDHHMMSS
+	Tone           float64         `json:"tone"`        // Sentiment score (-10 to +10)
+	SocialImageURL string          `json:"socialimage"`
+	Mentions       []GDELTMention  `json:"mentions,omitempty"`
+	Themes         []string        `json:"themes,omitempty"`
+	Locations      []GDELTLocation `json:"locations,omitempty"`
+	Organizations  []string        `json:"organizations,omitempty"`
+	Persons        []string        `json:"persons,omitempty"`
+}
+
+// GDELTMention represents mentions in GDELT articles
+type GDELTMention struct {
+	Name   string  `json:"name"`
+	Offset int     `json:"offset"`
+	Tone   float64 `json:"tone"`
+	Type   string  `json:"type"`
+}
+
+// GDELTLocation represents locations mentioned in GDELT articles
+type GDELTLocation struct {
+	Name        string  `json:"name"`
+	CountryCode string  `json:"countrycode"`
+	Latitude    float64 `json:"latitude"`
+	Longitude   float64 `json:"longitude"`
+	Type        string  `json:"type"`
+}
+
+// GDELTStats represents GDELT usage statistics
+type GDELTStats struct {
+	DailyRequests    int       `json:"daily_requests"`
+	HourlyRequests   int       `json:"hourly_requests"`
+	IndianArticles   int       `json:"indian_articles"`
+	GlobalArticles   int       `json:"global_articles"`
+	AverageTone      float64   `json:"average_tone"`
+	TopThemes        []string  `json:"top_themes"`
+	TopOrganizations []string  `json:"top_organizations"`
+	TopLocations     []string  `json:"top_locations"`
+	LastUpdated      time.Time `json:"last_updated"`
+}
+
+// ===============================
+// UPDATED: CACHE TTL CONFIGURATION FOR GDELT STRATEGY
+// ===============================
+
+// CacheTTLConfig represents TTL configuration for GDELT-enhanced strategy
 type CacheTTLConfig struct {
 	Category    string `json:"category"`
 	PeakTTL     int    `json:"peak_ttl"`     // Seconds during peak hours
 	OffPeakTTL  int    `json:"off_peak_ttl"` // Seconds during off-peak
 	EventTTL    int    `json:"event_ttl"`    // Seconds during special events
 	CacheTarget int    `json:"cache_target"` // Target cache hit percentage
+	GDELTBonus  bool   `json:"gdelt_bonus"`  // Can use longer TTL with GDELT capacity
 }
 
-// GetUpdatedCacheTTLConfigs returns the updated caching strategy for real-time capability
-func GetUpdatedCacheTTLConfigs() map[string]CacheTTLConfig {
+// GetGDELTEnhancedCacheTTLConfigs returns enhanced caching strategy with GDELT capacity
+func GetGDELTEnhancedCacheTTLConfigs() map[string]CacheTTLConfig {
 	return map[string]CacheTTLConfig{
-		"breaking":      {Category: "breaking", PeakTTL: 300, OffPeakTTL: 900, EventTTL: 120, CacheTarget: 60},         // 5min/15min/2min
-		"sports":        {Category: "sports", PeakTTL: 600, OffPeakTTL: 1800, EventTTL: 300, CacheTarget: 65},          // 10min/30min/5min
-		"business":      {Category: "business", PeakTTL: 900, OffPeakTTL: 2700, EventTTL: 600, CacheTarget: 70},        // 15min/45min/10min
-		"politics":      {Category: "politics", PeakTTL: 1800, OffPeakTTL: 3600, EventTTL: 900, CacheTarget: 75},       // 30min/60min/15min
-		"technology":    {Category: "technology", PeakTTL: 7200, OffPeakTTL: 10800, EventTTL: 3600, CacheTarget: 80},   // 2hr/3hr/1hr
-		"health":        {Category: "health", PeakTTL: 14400, OffPeakTTL: 18000, EventTTL: 7200, CacheTarget: 85},      // 4hr/5hr/2hr
-		"entertainment": {Category: "entertainment", PeakTTL: 3600, OffPeakTTL: 7200, EventTTL: 1800, CacheTarget: 75}, // 1hr/2hr/30min
-		"general":       {Category: "general", PeakTTL: 2700, OffPeakTTL: 5400, EventTTL: 1200, CacheTarget: 70},       // 45min/90min/20min
+		"breaking":      {Category: "breaking", PeakTTL: 180, OffPeakTTL: 600, EventTTL: 60, CacheTarget: 50, GDELTBonus: true},         // 3min/10min/1min (reduced with GDELT)
+		"sports":        {Category: "sports", PeakTTL: 300, OffPeakTTL: 900, EventTTL: 120, CacheTarget: 60, GDELTBonus: true},          // 5min/15min/2min
+		"business":      {Category: "business", PeakTTL: 600, OffPeakTTL: 1800, EventTTL: 300, CacheTarget: 65, GDELTBonus: true},       // 10min/30min/5min
+		"politics":      {Category: "politics", PeakTTL: 900, OffPeakTTL: 2700, EventTTL: 600, CacheTarget: 70, GDELTBonus: true},       // 15min/45min/10min
+		"technology":    {Category: "technology", PeakTTL: 3600, OffPeakTTL: 7200, EventTTL: 1800, CacheTarget: 75, GDELTBonus: true},   // 1hr/2hr/30min
+		"health":        {Category: "health", PeakTTL: 7200, OffPeakTTL: 14400, EventTTL: 3600, CacheTarget: 80, GDELTBonus: true},      // 2hr/4hr/1hr
+		"entertainment": {Category: "entertainment", PeakTTL: 1800, OffPeakTTL: 5400, EventTTL: 900, CacheTarget: 70, GDELTBonus: true}, // 30min/90min/15min
+		"general":       {Category: "general", PeakTTL: 1200, OffPeakTTL: 3600, EventTTL: 600, CacheTarget: 65, GDELTBonus: true},       // 20min/60min/10min
 	}
 }
 
 // ===============================
-// EXISTING HELPER METHODS - KEPT UNCHANGED
+// EXISTING HELPER METHODS - ENHANCED FOR GDELT
 // ===============================
 
-// IsIndianRelevant checks if content is relevant to India
+// IsIndianRelevant checks if content is relevant to India (enhanced with GDELT data)
 func (a *Article) IsIndianRelevant() bool {
-	return a.IsIndianContent || a.RelevanceScore > 0.5
+	// Enhanced with GDELT location data
+	if a.IsIndianContent {
+		return true
+	}
+
+	// Check GDELT locations for India references
+	if a.GDELTLocations != nil {
+		for _, location := range a.GDELTLocations {
+			if strings.Contains(strings.ToLower(location), "india") {
+				return true
+			}
+		}
+	}
+
+	return a.RelevanceScore > 0.5
 }
 
 // GetEstimatedReadingTime calculates reading time based on word count
@@ -499,16 +617,43 @@ func (a *Article) GetEstimatedReadingTime() int {
 	return 1
 }
 
-// IsTrending checks if article is trending (high view count, recent)
+// IsTrending checks if article is trending (enhanced with GDELT data)
 func (a *Article) IsTrending() bool {
-	// Simple trending logic: high views in last 24 hours
+	// Enhanced trending logic with GDELT sentiment
 	dayAgo := time.Now().Add(-24 * time.Hour)
-	return a.ViewCount > 100 && a.PublishedAt.After(dayAgo)
+	baseCondition := a.ViewCount > 100 && a.PublishedAt.After(dayAgo)
+
+	// Boost for positive GDELT sentiment
+	if a.GDELTTone != nil && *a.GDELTTone > 2.0 {
+		return baseCondition || (a.ViewCount > 50 && a.PublishedAt.After(dayAgo))
+	}
+
+	return baseCondition
 }
 
-// GetCacheKey generates cache key for different content types - EXISTING FUNCTION
+// HasGDELTData checks if article has GDELT-enhanced data
+func (a *Article) HasGDELTData() bool {
+	return a.GDELTTone != nil || len(a.GDELTThemes) > 0 || len(a.GDELTOrganizations) > 0
+}
+
+// GetGDELTSentimentLabel returns human-readable sentiment label from GDELT tone
+func (a *Article) GetGDELTSentimentLabel() string {
+	if a.GDELTTone == nil {
+		return "neutral"
+	}
+
+	tone := *a.GDELTTone
+	if tone > 2.0 {
+		return "positive"
+	} else if tone < -2.0 {
+		return "negative"
+	}
+	return "neutral"
+}
+
+// GetCacheKey generates cache key for different content types (enhanced for GDELT)
 func GetCacheKey(contentType, category string, page, limit int, filters map[string]interface{}) string {
-	key := fmt.Sprintf("%s:%s:p%d:l%d", contentType, category, page, limit)
+	key := fmt.Sprintf("gdelt:%s:%s:p%d:l%d", contentType, category, page, limit)
 	if len(filters) > 0 {
 		for k, v := range filters {
 			key += fmt.Sprintf(":%s=%v", k, v)
@@ -517,34 +662,34 @@ func GetCacheKey(contentType, category string, page, limit int, filters map[stri
 	return key
 }
 
-// GetDynamicTTL returns TTL based on content type and current time (IST) - UPDATED FOR REAL-TIME STRATEGY
+// GetDynamicTTL returns TTL based on content type and current time (enhanced for GDELT capacity)
 func GetDynamicTTL(contentType string) int {
 	ist := time.FixedZone("IST", 5*3600+30*60) // UTC+5:30
 	now := time.Now().In(ist)
 	hour := now.Hour()
 
-	// Get updated TTL configs
-	ttlConfigs := GetUpdatedCacheTTLConfigs()
+	// Get GDELT-enhanced TTL configs
+	ttlConfigs := GetGDELTEnhancedCacheTTLConfigs()
 
 	if config, exists := ttlConfigs[contentType]; exists {
 		switch contentType {
 		case "sports":
 			// IPL time: 7 PM - 10 PM IST
 			if hour >= 19 && hour <= 22 {
-				return config.EventTTL // 5 minutes during IPL
+				return config.EventTTL // 2 minutes during IPL (reduced with GDELT capacity)
 			}
-			return config.PeakTTL // 10 minutes otherwise
+			return config.PeakTTL // 5 minutes otherwise
 
 		case "business", "finance":
 			// Market hours: 9:15 AM - 3:30 PM IST
 			if hour >= 9 && hour <= 15 {
-				return config.EventTTL // 10 minutes during market hours
+				return config.EventTTL // 5 minutes during market hours
 			}
-			return config.OffPeakTTL // 45 minutes after market close
+			return config.OffPeakTTL // 30 minutes after market close
 
 		case "breaking":
-			// Always use event TTL for breaking news for real-time updates
-			return config.EventTTL // 2 minutes
+			// Always use event TTL for breaking news but less aggressive with GDELT
+			return config.EventTTL // 1 minute (reduced from 2 with GDELT)
 
 		default:
 			// Business hours: 9 AM - 6 PM IST
@@ -555,73 +700,60 @@ func GetDynamicTTL(contentType string) int {
 		}
 	}
 
-	// Fallback for unknown content types
+	// Fallback for unknown content types (enhanced with GDELT capacity)
 	if hour >= 9 && hour <= 18 {
-		return 2700 // 45 minutes during business hours
+		return 1200 // 20 minutes during business hours (reduced from 45 min)
 	}
-	return 3600 // 1 hour otherwise
+	return 1800 // 30 minutes otherwise (reduced from 1 hour)
 }
 
 // ===============================
-// NEW: ADDITIONAL HELPER FUNCTIONS FOR RAPIDAPI STRATEGY
+// NEW: GDELT-SPECIFIC HELPER FUNCTIONS
 // ===============================
 
-// IsIndianContentByKeywords determines if content is Indian-focused using keywords
-func IsIndianContentByKeywords(title, description, source string) bool {
-	indianKeywords := []string{
-		"india", "indian", "delhi", "mumbai", "bangalore", "chennai", "kolkata",
-		"hyderabad", "pune", "ahmedabad", "modi", "bjp", "congress", "rupee",
-		"bollywood", "cricket", "ipl", "bcci", "isro", "tata", "reliance",
-		"infosys", "wipro", "aadhaar", "gst", "lok sabha", "rajya sabha",
-		"supreme court", "rbi", "sensex", "nifty", "mumbai", "hindustan",
-	}
-
-	content := strings.ToLower(title + " " + description + " " + source)
-	for _, keyword := range indianKeywords {
-		if strings.Contains(content, keyword) {
-			return true
-		}
-	}
-	return false
+// IsGDELTSourced checks if article originated from GDELT
+func IsGDELTSourced(externalID string) bool {
+	return strings.HasPrefix(externalID, "gdelt_")
 }
 
-// GetAPISourcePriority returns the priority order for API sources
+// GetAPISourcePriority returns the updated priority order with GDELT first
 func GetAPISourcePriority() []APISourceType {
 	return []APISourceType{
-		APISourceRapidAPI,   // Priority 1: 15,000/day
-		APISourceNewsData,   // Priority 2: 150/day
-		APISourceGNews,      // Priority 3: 75/day
-		APISourceMediastack, // Priority 4: 12/day
+		APISourceGDELT,      // Priority 1: 24,000/day (FREE!)
+		APISourceRapidAPI,   // Priority 2: 15,000/day
+		APISourceNewsData,   // Priority 3: 150/day
+		APISourceGNews,      // Priority 4: 75/day
+		APISourceMediastack, // Priority 5: 12/day
 	}
 }
 
-// GetHourlyRequestDistribution returns hourly request distribution for IST optimization
-func GetHourlyRequestDistribution() map[int]int {
+// GetGDELTHourlyDistribution returns hourly request distribution optimized for GDELT
+func GetGDELTHourlyDistribution() map[int]int {
 	return map[int]int{
-		6:  200, // 06:00-07:00 IST: Morning prep
-		7:  300, // 07:00-08:00 IST: Morning prep
-		8:  400, // 08:00-09:00 IST: Pre-business
-		9:  750, // 09:00-10:00 IST: Business peak start
-		10: 750, // 10:00-11:00 IST: Business peak
-		11: 750, // 11:00-12:00 IST: Business peak
-		12: 850, // 12:00-13:00 IST: Market hours peak
-		13: 850, // 13:00-14:00 IST: Market hours peak
-		14: 850, // 14:00-15:00 IST: Market hours peak
-		15: 650, // 15:00-16:00 IST: Market close
-		16: 650, // 16:00-17:00 IST: Evening business
-		17: 650, // 17:00-18:00 IST: Evening business
-		18: 500, // 18:00-19:00 IST: Prime time start
-		19: 500, // 19:00-20:00 IST: Prime time
-		20: 500, // 20:00-21:00 IST: Prime time
-		21: 800, // 21:00-22:00 IST: IPL season peak
-		22: 300, // 22:00-23:00 IST: Evening wind down
-		23: 200, // 23:00-00:00 IST: Late evening
-		0:  150, // 00:00-01:00 IST: Overnight
-		1:  150, // 01:00-02:00 IST: Overnight
-		2:  150, // 02:00-03:00 IST: Overnight
-		3:  150, // 03:00-04:00 IST: Overnight
-		4:  150, // 04:00-05:00 IST: Overnight
-		5:  150, // 05:00-06:00 IST: Early morning
+		6:  1000, // 06:00-07:00 IST: Consistent GDELT usage
+		7:  1000, // 07:00-08:00 IST: Consistent GDELT usage
+		8:  1000, // 08:00-09:00 IST: Consistent GDELT usage
+		9:  1000, // 09:00-10:00 IST: Consistent GDELT usage
+		10: 1000, // 10:00-11:00 IST: Consistent GDELT usage
+		11: 1000, // 11:00-12:00 IST: Consistent GDELT usage
+		12: 1000, // 12:00-13:00 IST: Consistent GDELT usage
+		13: 1000, // 13:00-14:00 IST: Consistent GDELT usage
+		14: 1000, // 14:00-15:00 IST: Consistent GDELT usage
+		15: 1000, // 15:00-16:00 IST: Consistent GDELT usage
+		16: 1000, // 16:00-17:00 IST: Consistent GDELT usage
+		17: 1000, // 17:00-18:00 IST: Consistent GDELT usage
+		18: 1000, // 18:00-19:00 IST: Consistent GDELT usage
+		19: 1000, // 19:00-20:00 IST: Consistent GDELT usage
+		20: 1000, // 20:00-21:00 IST: Consistent GDELT usage
+		21: 1000, // 21:00-22:00 IST: Consistent GDELT usage
+		22: 1000, // 22:00-23:00 IST: Consistent GDELT usage
+		23: 1000, // 23:00-00:00 IST: Consistent GDELT usage
+		0:  1000, // 00:00-01:00 IST: Consistent GDELT usage
+		1:  1000, // 01:00-02:00 IST: Consistent GDELT usage
+		2:  1000, // 02:00-03:00 IST: Consistent GDELT usage
+		3:  1000, // 03:00-04:00 IST: Consistent GDELT usage
+		4:  1000, // 04:00-05:00 IST: Consistent GDELT usage
+		5:  1000, // 05:00-06:00 IST: Consistent GDELT usage
 	}
 }
 
@@ -665,15 +797,150 @@ func IsBusinessHours() bool {
 	return hour >= 9 && hour <= 18
 }
 
-// GetCurrentHourlyQuota returns the recommended requests for current hour
-func GetCurrentHourlyQuota() int {
-	ist := time.FixedZone("IST", 5*3600+30*60)
-	now := time.Now().In(ist)
-	hour := now.Hour()
+// GetCurrentGDELTQuota returns the recommended GDELT requests for current hour
+func GetCurrentGDELTQuota() int {
+	// GDELT provides consistent 1000/hour capacity
+	return 1000
+}
 
-	distribution := GetHourlyRequestDistribution()
-	if quota, exists := distribution[hour]; exists {
-		return quota
+// GetGDELTCapacityUtilization returns current GDELT capacity utilization
+func GetGDELTCapacityUtilization(used int) float64 {
+	if used == 0 {
+		return 0.0
 	}
-	return 400 // Default fallback
+	return (float64(used) / 1000.0) * 100.0 // Current hour utilization
+}
+
+// IsGDELTOptimalTime checks if current time is optimal for GDELT usage
+func IsGDELTOptimalTime() bool {
+	// GDELT is always optimal since it's free and has high capacity
+	return true
+}
+
+// ===============================
+// ENHANCED CONTENT DETECTION
+// ===============================
+
+// IsIndianContentByKeywords determines if content is Indian-focused using enhanced keywords
+func IsIndianContentByKeywords(title, description, source string) bool {
+	indianKeywords := []string{
+		"india", "indian", "delhi", "mumbai", "bangalore", "chennai", "kolkata",
+		"hyderabad", "pune", "ahmedabad", "modi", "bjp", "congress", "rupee",
+		"bollywood", "cricket", "ipl", "bcci", "isro", "tata", "reliance",
+		"infosys", "wipro", "aadhaar", "gst", "lok sabha", "rajya sabha",
+		"supreme court", "rbi", "sensex", "nifty", "mumbai", "hindustan",
+		// Enhanced GDELT-compatible keywords
+		"maharashtra", "karnataka", "tamil nadu", "west bengal", "rajasthan",
+		"gujarat", "kerala", "odisha", "bihar", "jharkhand", "assam",
+	}
+
+	content := strings.ToLower(title + " " + description + " " + source)
+	for _, keyword := range indianKeywords {
+		if strings.Contains(content, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// CalculateGDELTEnhancedRelevance calculates relevance score enhanced with GDELT data
+func CalculateGDELTEnhancedRelevance(article *Article) float64 {
+	score := article.RelevanceScore
+
+	// Boost for GDELT data availability
+	if article.HasGDELTData() {
+		score += 0.1
+	}
+
+	// Boost for multiple GDELT themes
+	if len(article.GDELTThemes) > 3 {
+		score += 0.1
+	}
+
+	// Boost for organization mentions
+	if len(article.GDELTOrganizations) > 1 {
+		score += 0.05
+	}
+
+	// Boost for location specificity
+	if len(article.GDELTLocations) > 0 {
+		score += 0.05
+	}
+
+	// Cap at 1.0
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	return score
+}
+
+// GetUpdatedCacheTTLConfigs returns updated cache TTL configurations with GDELT integration
+func GetUpdatedCacheTTLConfigs() map[string]CacheTTLConfig {
+	return map[string]CacheTTLConfig{
+		"breaking": {
+			Category:    "breaking",
+			PeakTTL:     300, // 5 minutes during peak hours
+			OffPeakTTL:  900, // 15 minutes during off-peak
+			EventTTL:    60,  // 1 minute during events
+			CacheTarget: 70,
+			GDELTBonus:  true,
+		},
+		"sports": {
+			Category:    "sports",
+			PeakTTL:     600,  // 10 minutes during peak hours
+			OffPeakTTL:  1800, // 30 minutes during off-peak
+			EventTTL:    120,  // 2 minutes during IPL/events
+			CacheTarget: 75,
+			GDELTBonus:  true,
+		},
+		"business": {
+			Category:    "business",
+			PeakTTL:     900,  // 15 minutes during market hours
+			OffPeakTTL:  3600, // 1 hour after market close
+			EventTTL:    300,  // 5 minutes during market events
+			CacheTarget: 80,
+			GDELTBonus:  true,
+		},
+		"politics": {
+			Category:    "politics",
+			PeakTTL:     1200, // 20 minutes during business hours
+			OffPeakTTL:  3600, // 1 hour during off-peak
+			EventTTL:    600,  // 10 minutes during political events
+			CacheTarget: 75,
+			GDELTBonus:  true,
+		},
+		"technology": {
+			Category:    "technology",
+			PeakTTL:     3600, // 1 hour during peak
+			OffPeakTTL:  7200, // 2 hours during off-peak
+			EventTTL:    1800, // 30 minutes during tech events
+			CacheTarget: 85,
+			GDELTBonus:  true,
+		},
+		"health": {
+			Category:    "health",
+			PeakTTL:     7200,  // 2 hours during peak
+			OffPeakTTL:  14400, // 4 hours during off-peak
+			EventTTL:    3600,  // 1 hour during health events
+			CacheTarget: 90,
+			GDELTBonus:  true,
+		},
+		"entertainment": {
+			Category:    "entertainment",
+			PeakTTL:     1800, // 30 minutes during peak
+			OffPeakTTL:  5400, // 90 minutes during off-peak
+			EventTTL:    900,  // 15 minutes during events
+			CacheTarget: 80,
+			GDELTBonus:  true,
+		},
+		"general": {
+			Category:    "general",
+			PeakTTL:     1800, // 30 minutes during peak
+			OffPeakTTL:  3600, // 1 hour during off-peak
+			EventTTL:    900,  // 15 minutes during events
+			CacheTarget: 75,
+			GDELTBonus:  true,
+		},
+	}
 }

@@ -87,6 +87,28 @@ class ApiEndpoints {
   static String get apiStatus => '$_baseUrl/status';
 
   // ===============================
+// READING ANALYTICS ENDPOINTS
+// ===============================
+
+// Main analytics endpoints
+  static String get readingAnalytics => '$_baseUrl/analytics/reading';
+  static String get categoryAnalytics => '$_baseUrl/analytics/categories';
+  static String get readingHabits => '$_baseUrl/analytics/habits';
+  static String get readingStreak => '$_baseUrl/analytics/streak';
+  static String get weeklyActivity => '$_baseUrl/analytics/weekly';
+
+// Individual analytics
+  static String get readingStats => '$_baseUrl/analytics/stats';
+  static String get engagementMetrics => '$_baseUrl/analytics/engagement';
+  static String get contentPreferences => '$_baseUrl/analytics/preferences';
+  static String get readingPatterns => '$_baseUrl/analytics/patterns';
+
+// India-specific analytics
+  static String get marketHoursActivity => '$_baseUrl/analytics/market-hours';
+  static String get iplEngagement => '$_baseUrl/analytics/ipl';
+  static String get indianContentRatio => '$_baseUrl/analytics/indian-content';
+
+  // ===============================
   // UTILITY METHODS
   // ===============================
 
