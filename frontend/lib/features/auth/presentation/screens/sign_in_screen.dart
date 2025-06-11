@@ -1,4 +1,5 @@
 // frontend/lib/features/auth/presentation/screens/sign_in_screen.dart
+// UPDATED WITH GOOGLE SIGN-IN INTEGRATION
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,7 +10,7 @@ import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../shared/widgets/common/custom_text_field.dart';
 import '../../../../shared/widgets/common/custom_button.dart';
-import '../../../../services/auth_service.dart'; // NEW: Import real auth service
+import '../../../../services/auth_service.dart';
 
 class SignInScreen extends ConsumerStatefulWidget {
   const SignInScreen({Key? key}) : super(key: key);
@@ -56,8 +57,6 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
     ));
 
     _animationController.forward();
-
-    // ✅ REMOVED: ref.listen from initState() - moved to build()
   }
 
   @override
@@ -70,7 +69,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
 
   @override
   Widget build(BuildContext context) {
-    // ✅ MOVED: ref.listen to build method
+    // Listen to authentication state changes
     ref.listen<AuthState>(authStateProvider, (previous, next) {
       if (!mounted) return;
 
@@ -90,7 +89,6 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
       }
     });
 
-    // NEW: Watch authentication state
     final authState = ref.watch(authStateProvider);
     final isLoading = authState is Loading;
 
@@ -170,7 +168,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                   keyboardType: TextInputType.emailAddress,
                   validator: Validators.email,
                   textCapitalization: TextCapitalization.none,
-                  enabled: !isLoading, // NEW: Disable during loading
+                  enabled: !isLoading,
                 ),
 
                 const SizedBox(height: 16),
@@ -182,7 +180,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                   prefixIcon: Icons.lock_outline,
                   obscureText: !_isPasswordVisible,
                   validator: Validators.password,
-                  enabled: !isLoading, // NEW: Disable during loading
+                  enabled: !isLoading,
                   suffixIcon: IconButton(
                     icon: Icon(
                       _isPasswordVisible
@@ -206,7 +204,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
                 CustomButton(
                   text: 'Sign In',
                   onPressed: isLoading ? null : _handleSignIn,
-                  isLoading: isLoading, // NEW: Show loading state
+                  isLoading: isLoading,
                   type: ButtonType.primary,
                 ),
 
@@ -262,22 +260,26 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
 
                 const SizedBox(height: 24),
 
-                // Google Sign In Button
+                // Google Sign In Button - UPDATED WITH REAL IMPLEMENTATION
                 CustomButton(
                   text: 'Sign In with Google',
                   onPressed: isLoading ? null : _handleGoogleSignIn,
                   type: ButtonType.outline,
-                  prefixIcon: Image.asset(
-                    'assets/images/icons/google_icon.png',
-                    height: 20,
+                  prefixIcon: Container(
                     width: 20,
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Icon(
-                        Icons.g_mobiledata,
-                        size: 20,
-                        color: AppColors.primary,
-                      );
-                    },
+                    height: 20,
+                    child: Image.asset(
+                      'assets/images/icons/google_icon.png',
+                      width: 20,
+                      height: 20,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.g_mobiledata,
+                          size: 20,
+                          color: AppColors.primary,
+                        );
+                      },
+                    ),
                   ),
                 ),
 
@@ -317,21 +319,25 @@ class _SignInScreenState extends ConsumerState<SignInScreen>
     );
   }
 
-  // NEW: Updated to use real authentication service
+  // Email/Password Sign In
   void _handleSignIn() async {
     if (_formKey.currentState!.validate()) {
       final email = _emailController.text.trim();
       final password = _passwordController.text;
 
-      // Use the real authentication service
       final authNotifier = ref.read(authStateProvider.notifier);
       await authNotifier.login(email, password);
     }
   }
 
+  // ✅ UPDATED: Real Google Sign-In Implementation
   void _handleGoogleSignIn() async {
-    // TODO: Implement Google Sign In with real service
-    _showInfoSnackbar('Google Sign In will be implemented in future updates');
+    try {
+      final authNotifier = ref.read(authStateProvider.notifier);
+      await authNotifier.signInWithGoogle();
+    } catch (e) {
+      _showErrorSnackbar('Google Sign-In failed: ${e.toString()}');
+    }
   }
 
   void _showSuccessSnackbar(String message) {

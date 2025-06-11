@@ -1,4 +1,4 @@
-// lib/features/auth/presentation/screens/sign_up_screen.dart - UPDATED WITH OTP FLOW
+// lib/features/auth/presentation/screens/sign_up_screen.dart - UPDATED WITH GOOGLE SIGN-UP
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -395,15 +395,26 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
 
                 const SizedBox(height: 24),
 
-                // Google Sign Up Button
+                // Google Sign Up Button - UPDATED WITH REAL IMPLEMENTATION
                 CustomButton(
                   text: 'Sign Up with Google',
                   onPressed: _isLoading ? null : _handleGoogleSignUp,
                   type: ButtonType.outline,
-                  prefixIcon: const Icon(
-                    Icons.g_mobiledata,
-                    size: 20,
-                    color: AppColors.primary,
+                  prefixIcon: Container(
+                    width: 20,
+                    height: 20,
+                    child: Image.asset(
+                      'assets/images/icons/google_icon.png',
+                      width: 20,
+                      height: 20,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.g_mobiledata,
+                          size: 20,
+                          color: AppColors.primary,
+                        );
+                      },
+                    ),
                   ),
                 ),
 
@@ -465,7 +476,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     );
   }
 
-  // ✅ UPDATED: New OTP-based registration flow
+  // Email/Password Registration
   void _handleSignUp() async {
     if (_formKey.currentState!.validate() && _acceptTerms) {
       setState(() {
@@ -512,9 +523,14 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen>
     }
   }
 
+  // ✅ UPDATED: Real Google Sign-Up Implementation
   void _handleGoogleSignUp() async {
-    // TODO: Implement Google Sign Up with real service
-    _showInfoSnackbar('Google Sign Up will be implemented in future updates');
+    try {
+      final authNotifier = ref.read(authStateProvider.notifier);
+      await authNotifier.signUpWithGoogle();
+    } catch (e) {
+      _showErrorSnackbar('Google Sign-Up failed: ${e.toString()}');
+    }
   }
 
   void _showSuccessSnackbar(String message) {

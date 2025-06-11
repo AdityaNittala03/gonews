@@ -1,4 +1,4 @@
-// lib/services/auth_service.dart - COMPLETE REWRITE WITH OTP INTEGRATION
+// lib/services/auth_service.dart - COMPLETE WITH GOOGLE SIGN-IN INTEGRATION
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart';
@@ -7,6 +7,7 @@ import '../core/network/api_client.dart';
 import '../core/network/api_endpoints.dart';
 import '../core/adapters/backend_adapters.dart';
 import 'token_service.dart';
+import 'google_sign_in_service.dart'; // NEW: Import Google Sign-In service
 
 // ===============================
 // PROVIDERS
@@ -16,7 +17,8 @@ import 'token_service.dart';
 final authServiceProvider = Provider<AuthService>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   final tokenService = ref.watch(tokenServiceProvider);
-  return AuthService(apiClient, tokenService);
+  final googleSignInService = ref.watch(googleSignInServiceProvider); // NEW
+  return AuthService(apiClient, tokenService, googleSignInService);
 });
 
 // Auth State Provider
@@ -33,11 +35,130 @@ final authStateProvider =
 class AuthService {
   final ApiClient _apiClient;
   final TokenService _tokenService;
+  final GoogleSignInService _googleSignInService; // NEW
 
-  AuthService(this._apiClient, this._tokenService);
+  AuthService(this._apiClient, this._tokenService, this._googleSignInService);
 
   // ===============================
-  // OTP METHODS (NEW)
+  // GOOGLE SIGN-IN METHODS (NEW)
+  // ===============================
+
+  /// Sign in with Google
+  Future<AuthResult> signInWithGoogle() async {
+    try {
+      // Step 1: Sign in with Google
+      final googleResult = await _googleSignInService.signInWithGoogle();
+
+      if (googleResult.isError) {
+        return AuthResult.error(
+            message: googleResult.errorMessage ?? 'Google Sign-In failed');
+      }
+
+      if (googleResult.isCancelled) {
+        return AuthResult.error(message: 'Google Sign-In was cancelled');
+      }
+
+      // Step 2: Send Google ID token to backend for verification
+      final response = await _apiClient.post(
+        '/auth/google-signin',
+        data: {
+          'id_token': googleResult.idToken,
+          'access_token': googleResult.accessToken,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        final data = responseData['data'] as Map<String, dynamic>;
+
+        // Store tokens from backend response
+        await _tokenService.storeTokens(
+          accessToken: data['access_token'],
+          refreshToken: data['refresh_token'],
+          expiresInSeconds: data['expires_in'],
+        );
+
+        // Store user data
+        if (data['user'] != null) {
+          final userData = BackendAdapters.userFromBackend(data['user']);
+          await _tokenService.storeUserData(userData);
+        }
+
+        return AuthResult.success(
+          message: responseData['message'] ?? 'Welcome to GoNews!',
+          user: data['user'] != null
+              ? BackendAdapters.userFromBackend(data['user'])
+              : null,
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(
+          message: 'Google Sign-In failed: ${e.toString()}');
+    }
+  }
+
+  /// Sign up with Google
+  Future<AuthResult> signUpWithGoogle() async {
+    try {
+      // Step 1: Sign in with Google
+      final googleResult = await _googleSignInService.signInWithGoogle();
+
+      if (googleResult.isError) {
+        return AuthResult.error(
+            message: googleResult.errorMessage ?? 'Google Sign-Up failed');
+      }
+
+      if (googleResult.isCancelled) {
+        return AuthResult.error(message: 'Google Sign-Up was cancelled');
+      }
+
+      // Step 2: Send Google ID token to backend for registration
+      final response = await _apiClient.post(
+        '/auth/google-signup',
+        data: {
+          'id_token': googleResult.idToken,
+          'access_token': googleResult.accessToken,
+        },
+        parser: (data) => data,
+      );
+
+      if (response.isSuccess) {
+        final responseData = response.data as Map<String, dynamic>;
+        final data = responseData['data'] as Map<String, dynamic>;
+
+        // Store tokens from backend response
+        await _tokenService.storeTokens(
+          accessToken: data['access_token'],
+          refreshToken: data['refresh_token'],
+          expiresInSeconds: data['expires_in'],
+        );
+
+        // Store user data
+        if (data['user'] != null) {
+          final userData = BackendAdapters.userFromBackend(data['user']);
+          await _tokenService.storeUserData(userData);
+        }
+
+        return AuthResult.success(
+          message: responseData['message'] ?? 'Account created successfully!',
+          user: data['user'] != null
+              ? BackendAdapters.userFromBackend(data['user'])
+              : null,
+        );
+      } else {
+        return AuthResult.error(message: response.message);
+      }
+    } catch (e) {
+      return AuthResult.error(
+          message: 'Google Sign-Up failed: ${e.toString()}');
+    }
+  }
+
+  // ===============================
+  // OTP METHODS (EXISTING)
   // ===============================
 
   /// Step 1: Send Registration OTP
@@ -337,18 +458,22 @@ class AuthService {
     }
   }
 
-  /// Logout user
+  /// Logout user (UPDATED with Google Sign-Out)
   Future<AuthResult> logout() async {
     try {
       // Call logout endpoint (optional, for server-side cleanup)
       await _apiClient.post(ApiEndpoints.logout);
+
+      // Sign out from Google as well
+      await _googleSignInService.signOut();
 
       // Clear local tokens regardless of API response
       await _tokenService.clearTokens();
 
       return AuthResult.success(message: 'Logged out successfully');
     } catch (e) {
-      // Still clear tokens even if API call fails
+      // Still clear tokens and sign out from Google even if API call fails
+      await _googleSignInService.signOut();
       await _tokenService.clearTokens();
       return AuthResult.success(message: 'Logged out successfully');
     }
@@ -444,7 +569,7 @@ class AuthService {
 }
 
 // ===============================
-// AUTH STATE NOTIFIER (UPDATED WITH OTP)
+// AUTH STATE NOTIFIER (UPDATED WITH GOOGLE)
 // ===============================
 
 class AuthStateNotifier extends StateNotifier<AuthState> {
@@ -475,10 +600,38 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
   }
 
   // ===============================
-  // OTP REGISTRATION FLOW (NEW)
+  // GOOGLE SIGN-IN METHODS (NEW)
   // ===============================
 
-  /// ✅ FIXED: Step 1 - Start Registration (Send OTP)
+  /// Sign in with Google
+  Future<void> signInWithGoogle() async {
+    state = const AuthState.loading();
+
+    final result = await _authService.signInWithGoogle();
+    if (result.isSuccess) {
+      state = AuthState.authenticated(result.user!);
+    } else {
+      state = AuthState.error(result.message);
+    }
+  }
+
+  /// Sign up with Google
+  Future<void> signUpWithGoogle() async {
+    state = const AuthState.loading();
+
+    final result = await _authService.signUpWithGoogle();
+    if (result.isSuccess) {
+      state = AuthState.authenticated(result.user!);
+    } else {
+      state = AuthState.error(result.message);
+    }
+  }
+
+  // ===============================
+  // OTP REGISTRATION FLOW (EXISTING)
+  // ===============================
+
+  /// ✅ Step 1 - Start Registration (Send OTP)
   Future<AuthResult> startRegistration({
     required String name,
     required String email,
@@ -502,7 +655,7 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
     return result;
   }
 
-  /// ✅ FIXED: Step 3 - Complete Registration (after OTP verification)
+  /// ✅ Step 3 - Complete Registration (after OTP verification)
   Future<void> completeRegistration({
     required String email,
     required String name,
