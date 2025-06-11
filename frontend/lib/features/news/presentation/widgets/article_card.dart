@@ -1,11 +1,11 @@
 // lib/features/news/presentation/widgets/article_card.dart
-// FIXED: Removed dependencies on missing Article model methods
+// UPDATED: Integrated fallback image system
 
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
+import '../../../../core/utils/image_utils.dart'; // NEW: Import ImageUtils
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
 import '../../data/models/article_model.dart';
 
@@ -93,7 +93,7 @@ class _ArticleCardState extends State<ArticleCard>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Article Image
+              // Article Image - UPDATED with smart image handling
               _buildArticleImage(),
 
               // Article Content
@@ -129,162 +129,128 @@ class _ArticleCardState extends State<ArticleCard>
     );
   }
 
+  // UPDATED: Enhanced image widget with smart fallback handling
   Widget _buildArticleImage() {
-    return ClipRRect(
-      borderRadius: const BorderRadius.only(
-        topLeft: Radius.circular(16),
-        topRight: Radius.circular(16),
-      ),
-      child: Stack(
-        children: [
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: safeImageUrl.isNotEmpty
-                ? CachedNetworkImage(
-                    imageUrl: safeImageUrl,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    placeholder: (context, url) => const ShimmerWidget(
-                      child: AspectRatio(
-                        aspectRatio: 16 / 9,
-                        child: ColoredBox(color: AppColors.grey200),
-                      ),
-                    ),
-                    errorWidget: (context, url, error) => Container(
-                      color: AppColors.grey100,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.image_not_supported,
-                            color: AppColors.grey400,
-                            size: 40,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Image not available',
-                            style:
-                                Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: AppColors.grey400,
-                                    ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                : Container(
-                    color: AppColors.grey100,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.image_not_supported,
-                          color: AppColors.grey400,
-                          size: 40,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'No image available',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: AppColors.grey400,
-                                  ),
-                        ),
-                      ],
-                    ),
-                  ),
+    return Stack(
+      children: [
+        // Smart image with automatic fallback
+        ImageUtils.buildArticleCardImage(
+          article: widget.article,
+          aspectRatio: 16 / 9,
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
           ),
+        ),
 
-          // Trending Badge
-          if (isTrending)
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.error,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.trending_up,
-                      color: AppColors.white,
-                      size: 12,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Trending',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 10,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-          // Bookmark Button
+        // Trending Badge
+        if (isTrending)
           Positioned(
             top: 12,
-            right: 12,
-            child: GestureDetector(
-              onTap: widget.onBookmark,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: AppColors.white.withOpacity(0.9),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.black.withOpacity(0.1),
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  isBookmarked ? Icons.bookmark : Icons.bookmark_border,
-                  color: isBookmarked ? AppColors.primary : AppColors.grey600,
-                  size: 18,
-                ),
+            left: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 4,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.error,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.black.withOpacity(0.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.trending_up,
+                    color: AppColors.white,
+                    size: 12,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Trending',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 10,
+                        ),
+                  ),
+                ],
               ),
             ),
           ),
-        ],
-      ),
+
+        // Bookmark Button
+        Positioned(
+          top: 12,
+          right: 12,
+          child: GestureDetector(
+            onTap: widget.onBookmark,
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: AppColors.white.withOpacity(0.9),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Icon(
+                isBookmarked ? Icons.bookmark : Icons.bookmark_border,
+                color: isBookmarked ? AppColors.primary : AppColors.grey600,
+                size: 18,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildCategoryRow() {
     return Row(
       children: [
-        // Category Badge
+        // Category Badge - UPDATED with ImageUtils color
         Container(
           padding: const EdgeInsets.symmetric(
             horizontal: 8,
             vertical: 4,
           ),
           decoration: BoxDecoration(
-            color: _getCategoryColor().withOpacity(0.1),
+            color: ImageUtils.getCategoryColor(categoryDisplayName)
+                .withOpacity(0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Text(
-            categoryDisplayName.toUpperCase(),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _getCategoryColor(),
-                  fontWeight: FontWeight.w700,
-                  fontSize: 10,
-                  letterSpacing: 0.5,
-                ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                ImageUtils.getCategoryIcon(categoryDisplayName),
+                size: 12,
+                color: ImageUtils.getCategoryColor(categoryDisplayName),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                categoryDisplayName.toUpperCase(),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: ImageUtils.getCategoryColor(categoryDisplayName),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 10,
+                      letterSpacing: 0.5,
+                    ),
+              ),
+            ],
           ),
         ),
 
@@ -363,25 +329,39 @@ class _ArticleCardState extends State<ArticleCard>
   Widget _buildFooter() {
     return Row(
       children: [
-        // Source
+        // Source with enhanced avatar
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: [
-              Text(
-                widget.article.source ?? 'Unknown Source',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
+              // Source avatar - UPDATED with ImageUtils
+              ImageUtils.buildSourceAvatar(
+                source: widget.article.source,
+                radius: 12,
               ),
-              const SizedBox(height: 2),
-              Text(
-                timeAgo,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.grey400,
-                      fontSize: 11,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.article.source,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    const SizedBox(height: 2),
+                    Text(
+                      timeAgo,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.grey400,
+                            fontSize: 11,
+                          ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -439,23 +419,7 @@ class _ArticleCardState extends State<ArticleCard>
     _animationController.reverse();
   }
 
-  Color _getCategoryColor() {
-    // Simple category color mapping
-    switch (categoryDisplayName.toLowerCase()) {
-      case 'politics':
-        return AppColors.error;
-      case 'business':
-        return AppColors.primary;
-      case 'sports':
-        return AppColors.success;
-      case 'technology':
-        return AppColors.info;
-      case 'health':
-        return AppColors.warning;
-      default:
-        return AppColors.primary;
-    }
-  }
+  // REMOVED: _getCategoryColor method (now using ImageUtils.getCategoryColor)
 
   void _showMoreOptions(BuildContext context) {
     showModalBottomSheet(

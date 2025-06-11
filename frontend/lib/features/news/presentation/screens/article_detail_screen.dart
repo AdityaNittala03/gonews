@@ -1,4 +1,5 @@
 // lib/features/news/presentation/screens/article_detail_screen.dart
+// UPDATED: Integrated fallback image system for hero and content images
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/color_constants.dart';
 import '../../../../core/utils/date_formatter.dart';
+import '../../../../core/utils/image_utils.dart'; // NEW: Import ImageUtils
 import '../../../../shared/widgets/common/custom_button.dart';
 import '../../../../shared/widgets/animations/shimmer_widget.dart';
 import '../../data/models/article_model.dart';
@@ -14,8 +16,6 @@ import '../widgets/article_card.dart';
 import '../providers/news_providers.dart';
 
 import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
-
-// ✅ ENHANCED: Added back navigation functionality for related articles
 
 class ArticleDetailScreen extends ConsumerStatefulWidget {
   final String articleId;
@@ -39,7 +39,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
   bool _showFab = false;
   bool _isRefreshing = false;
 
-  // ✅ NEW: Navigation history stack for related articles
+  // Navigation history stack for related articles
   List<String> _articleHistory = [];
   int _currentHistoryIndex = -1;
 
@@ -47,7 +47,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
   void initState() {
     super.initState();
 
-    // ✅ NEW: Initialize article history with current article
+    // Initialize article history with current article
     _articleHistory = [widget.articleId];
     _currentHistoryIndex = 0;
 
@@ -89,7 +89,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     super.dispose();
   }
 
-  // ✅ NEW: Get current article ID from history or widget
+  // Get current article ID from history or widget
   String get _currentArticleId {
     if (_currentHistoryIndex >= 0 &&
         _currentHistoryIndex < _articleHistory.length) {
@@ -98,19 +98,18 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     return widget.articleId;
   }
 
-  // ✅ NEW: Check if we can navigate back in article history
+  // Check if we can navigate back in article history
   bool get _canNavigateBack {
     return _currentHistoryIndex > 0;
   }
 
-  // ✅ NEW: Check if we can navigate forward in article history
+  // Check if we can navigate forward in article history
   bool get _canNavigateForward {
     return _currentHistoryIndex < _articleHistory.length - 1;
   }
 
   @override
   Widget build(BuildContext context) {
-    // ✅ UPDATED: Use current article ID from history
     final article = ref.watch(articleByIdProvider(_currentArticleId));
     final relatedArticles =
         ref.watch(relatedArticlesProvider(_currentArticleId));
@@ -124,10 +123,10 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
       body: CustomScrollView(
         controller: _scrollController,
         slivers: [
-          // App Bar with enhanced navigation
+          // App Bar with enhanced navigation and UPDATED hero image
           _buildSliverAppBar(article),
 
-          // ✅ NEW: Article navigation bar (if we have history)
+          // Article navigation bar (if we have history)
           if (_articleHistory.length > 1)
             SliverToBoxAdapter(
               child: _buildArticleNavigationBar(),
@@ -149,6 +148,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     );
   }
 
+  // UPDATED: Enhanced app bar with smart hero image handling
   Widget _buildSliverAppBar(Article article) {
     return SliverAppBar(
       expandedHeight: 300,
@@ -156,7 +156,6 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
       elevation: 0,
       backgroundColor: AppColors.primary,
       iconTheme: const IconThemeData(color: AppColors.white),
-      // ✅ UPDATED: Enhanced leading with back navigation
       leading: IconButton(
         onPressed: () {
           if (_canNavigateBack) {
@@ -190,7 +189,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
           onPressed: () => _shareArticle(article),
           icon: const Icon(Icons.share, color: AppColors.white),
         ),
-        // ✅ NEW: Navigation history button (if we have history)
+        // Navigation history button (if we have history)
         if (_articleHistory.length > 1)
           PopupMenuButton<String>(
             icon: const Icon(Icons.history, color: AppColors.white),
@@ -239,35 +238,14 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
         background: Stack(
           fit: StackFit.expand,
           children: [
-            // Article image
-            if (article.safeImageUrl.isNotEmpty)
-              Image.network(
-                article.safeImageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    color: AppColors.grey300,
-                    child: const Center(
-                      child: Icon(
-                        Icons.image_not_supported,
-                        size: 50,
-                        color: AppColors.grey600,
-                      ),
-                    ),
-                  );
-                },
-              )
-            else
-              Container(
-                color: AppColors.primary,
-                child: const Center(
-                  child: Icon(
-                    Icons.article,
-                    size: 80,
-                    color: AppColors.white,
-                  ),
-                ),
-              ),
+            // UPDATED: Smart hero image with fallback
+            ImageUtils.buildArticleHeroImage(
+              article: article,
+              height: 300,
+              fit: BoxFit.cover,
+            ),
+
+            // Gradient overlay
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -280,6 +258,8 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                 ),
               ),
             ),
+
+            // Article info overlay
             Positioned(
               bottom: 16,
               left: 16,
@@ -287,30 +267,59 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // UPDATED: Enhanced category badge with icon
                   Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: AppColors.primary,
+                      color: ImageUtils.getCategoryColor(
+                              article.categoryDisplayName)
+                          .withOpacity(0.9),
                       borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.black.withOpacity(0.3),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
-                    child: Text(
-                      article.categoryDisplayName.toUpperCase(),
-                      style: const TextStyle(
-                        color: AppColors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          ImageUtils.getCategoryIcon(
+                              article.categoryDisplayName),
+                          size: 14,
+                          color: AppColors.white,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          article.categoryDisplayName.toUpperCase(),
+                          style: const TextStyle(
+                            color: AppColors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     article.title,
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          color: AppColors.white,
-                          fontWeight: FontWeight.bold,
-                          height: 1.3,
+                      color: AppColors.white,
+                      fontWeight: FontWeight.bold,
+                      height: 1.3,
+                      shadows: [
+                        Shadow(
+                          color: AppColors.black.withOpacity(0.5),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
                         ),
+                      ],
+                    ),
                     maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -320,30 +329,66 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
                       Icon(
                         Icons.access_time,
                         size: 14,
-                        color: AppColors.white.withOpacity(0.8),
+                        color: AppColors.white.withOpacity(0.9),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         article.timeAgo,
                         style: TextStyle(
-                          color: AppColors.white.withOpacity(0.8),
+                          color: AppColors.white.withOpacity(0.9),
                           fontSize: 12,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(width: 16),
                       Icon(
                         Icons.schedule,
                         size: 14,
-                        color: AppColors.white.withOpacity(0.8),
+                        color: AppColors.white.withOpacity(0.9),
                       ),
                       const SizedBox(width: 4),
                       Text(
                         '${article.estimatedReadTime} min read',
                         style: TextStyle(
-                          color: AppColors.white.withOpacity(0.8),
+                          color: AppColors.white.withOpacity(0.9),
                           fontSize: 12,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
+
+                      const Spacer(),
+
+                      // India badge if applicable
+                      if (article.isIndiaRelated)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [AppColors.saffron, AppColors.green],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.black.withOpacity(0.3),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            '🇮🇳 INDIA',
+                            style: TextStyle(
+                              color: AppColors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ],
@@ -355,7 +400,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     );
   }
 
-  // ✅ NEW: Article navigation bar widget
+  // Article navigation bar widget
   Widget _buildArticleNavigationBar() {
     return Container(
       color: AppColors.white,
@@ -416,21 +461,14 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Author and source info
+          // UPDATED: Author and source info with enhanced avatar
           Row(
             children: [
-              CircleAvatar(
+              ImageUtils.buildSourceAvatar(
+                source: article.safeAuthor.isNotEmpty
+                    ? article.safeAuthor
+                    : article.source,
                 radius: 20,
-                backgroundColor: AppColors.primaryContainer,
-                child: Text(
-                  article.safeAuthor.isNotEmpty
-                      ? article.safeAuthor[0].toUpperCase()
-                      : 'A',
-                  style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -605,7 +643,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
               final relatedArticle = relatedArticles[index];
               return ArticleCard(
                 article: relatedArticle,
-                // ✅ UPDATED: Use enhanced navigation
+                // Enhanced navigation for related articles
                 onTap: () => _navigateToRelatedArticle(relatedArticle),
                 onBookmark: () => _toggleBookmark(relatedArticle),
                 onShare: () => _shareArticle(relatedArticle),
@@ -674,7 +712,7 @@ class _ArticleDetailScreenState extends ConsumerState<ArticleDetailScreen>
     );
   }
 
-  // ✅ ENHANCED Navigation methods
+  // Enhanced Navigation methods
 
   void _navigateToRelatedArticle(Article article) {
     final newArticleId = article.uniqueId;

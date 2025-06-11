@@ -94,16 +94,17 @@ flutter:
   # Assets Configuration
   assets:
     - assets/icons/
-  
-  # # Custom Fonts (Inter Font Family)
-  # fonts:
-  #   - family: Inter
-  #     fonts:
-  #       - asset: assets/fonts/Inter-Regular.ttf
-  #         weight: 400
-  #       - asset: assets/fonts/Inter-Medium.ttf
-  #         weight: 500
-  #       - asset: assets/fonts/Inter-SemiBold.ttf
-  #         weight: 600
-  #       - asset: assets/fonts/Inter-Bold.ttf
-  #         weight: 700
+    - assets/fallback_images/politics/
+    - assets/fallback_images/business/
+    - assets/fallback_images/sports/
+    - assets/fallback_images/technology/
+    - assets/fallback_images/health/
+   # - assets/fallback_images/breaking 
+    #- assets/fallback_images/defence 
+   # - assets/fallback_images/education
+    #- assets/fallback_images/entertainment/
+    #- assets/fallback_images/general/
+    #- assets/fallback_images/international/
+    #- assets/fallback_images/regional/
+    #- assets/fallback_images/science/
+    #- assets/fallback_images/top-stories/

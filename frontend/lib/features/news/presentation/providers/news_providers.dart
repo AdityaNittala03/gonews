@@ -5,6 +5,8 @@ import '../../data/models/article_model.dart';
 import '../../data/models/category_model.dart' as news_models;
 import '../../../../services/news_service.dart';
 import '../../../../core/network/api_client.dart';
+// ADD THIS IMPORT for bookmark fallback
+import '../../../bookmarks/presentation/providers/bookmark_providers.dart';
 
 // News service provider
 final newsServiceProvider = Provider<NewsService>((ref) {
@@ -60,23 +62,46 @@ final filteredNewsProvider = Provider<AsyncValue<List<Article>>>((ref) {
   return news; // NewsNotifier now handles category filtering internally
 });
 
-// Article by ID provider - uses uniqueId for lookup
+// FIXED: Article by ID provider with bookmark fallback
 final articleByIdProvider =
     Provider.family<Article?, String>((ref, articleIdentifier) {
   final news = ref.watch(newsProvider);
+  final bookmarks = ref.watch(bookmarksProvider); // Add bookmark fallback
 
   return news.when(
     data: (articles) {
       try {
-        // Find by uniqueId (which handles external_id and id fallback)
+        // First, try to find in current news feed
         return articles
+            .firstWhere((article) => article.uniqueId == articleIdentifier);
+      } catch (e) {
+        // Fallback: search in bookmarks if not found in news feed
+        try {
+          return bookmarks
+              .firstWhere((article) => article.uniqueId == articleIdentifier);
+        } catch (e) {
+          return null;
+        }
+      }
+    },
+    loading: () {
+      // When news is loading, check bookmarks as fallback
+      try {
+        return bookmarks
             .firstWhere((article) => article.uniqueId == articleIdentifier);
       } catch (e) {
         return null;
       }
     },
-    loading: () => null,
-    error: (error, stackTrace) => null,
+    error: (error, stackTrace) {
+      // When news has error, check bookmarks as fallback
+      try {
+        return bookmarks
+            .firstWhere((article) => article.uniqueId == articleIdentifier);
+      } catch (e) {
+        return null;
+      }
+    },
   );
 });
 
