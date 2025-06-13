@@ -152,6 +152,9 @@ func main() {
 		"otp_repository":     otpRepo != nil,
 	})
 
+	// Initialize Google OAuth Service
+	googleOAuthService := services.NewGoogleOAuthService(cfg.GoogleClientID)
+
 	// Initialize services with Dashboard + Search + OTP integration
 	logger.Info("Initializing services with Dashboard + Search + OTP integration...")
 
@@ -230,6 +233,7 @@ func main() {
 		"cache_service":        cacheService != nil,
 		"email_service":        emailService != nil,
 		"otp_service":          otpService != nil,
+		"google_oauth_service": googleOAuthService != nil,
 		"search_service":       searchService != nil,
 		"quota_manager":        quotaManager != nil,
 		"news_service":         newsAggregatorService != nil,

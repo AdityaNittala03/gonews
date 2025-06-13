@@ -1,4 +1,4 @@
-// routes/routes.go - Updated with Dashboard Integration + Search Integration + OTP Integration
+// routes/routes.go - Updated with Dashboard Integration + Search Integration + OTP Integration + Google OAuth Integration
 
 package routes
 
@@ -18,7 +18,7 @@ import (
 	"backend/pkg/logger"
 )
 
-// SetupRoutes configures all application routes with Dashboard + Search + OTP integration
+// SetupRoutes configures all application routes with Dashboard + Search + OTP + Google OAuth integration
 func SetupRoutes(
 	app *fiber.App,
 	db *sqlx.DB,
@@ -31,7 +31,7 @@ func SetupRoutes(
 	performanceService *services.PerformanceService,
 	cacheService *services.CacheService,
 	searchService *services.SearchService,
-	quotaManager *services.QuotaManager, // ADDED: For dashboard integration
+	quotaManager *services.QuotaManager,
 ) {
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
@@ -44,6 +44,9 @@ func SetupRoutes(
 	// Initialize OTP and Email services
 	emailService := services.NewEmailService(cfg, log)
 	otpService := services.NewOTPService(otpRepo, emailService, log)
+
+	// Initialize Google OAuth Service
+	googleOAuthService := services.NewGoogleOAuthService(cfg.GoogleClientID)
 
 	// ===============================
 	// SERVICE INITIALIZATION WITH DATABASE INTEGRATION
@@ -123,14 +126,14 @@ func SetupRoutes(
 	}
 
 	// ===============================
-	// INITIALIZE HANDLERS WITH DASHBOARD + SEARCH + OTP SUPPORT
+	// INITIALIZE HANDLERS WITH DASHBOARD + SEARCH + OTP + GOOGLE OAUTH SUPPORT
 	// ===============================
 
-	// Enhanced auth handler with OTP services
-	authHandler := handlers.NewAuthHandler(authService, otpService, emailService, userRepo)
+	// Enhanced auth handler with OTP services and Google OAuth
+	authHandler := handlers.NewAuthHandler(authService, otpService, emailService, userRepo, googleOAuthService)
 	newsHandler := handlers.NewNewsHandler(finalNewsService, finalCacheService, cfg, log)
 
-	// NEW: Dashboard handler for API monitoring
+	// Dashboard handler for API monitoring
 	dashboardHandler := handlers.NewDashboardHandler(
 		finalNewsService,
 		finalCacheService,
@@ -157,7 +160,7 @@ func SetupRoutes(
 	}
 
 	log.Info("All handlers initialized successfully", map[string]interface{}{
-		"auth_handler":         "✅ Enhanced with OTP verification",
+		"auth_handler":         "✅ Enhanced with OTP verification + Google OAuth",
 		"news_handler":         "✅",
 		"dashboard_handler":    "✅ API monitoring and debugging",
 		"search_handler":       searchHandler != nil,
@@ -168,6 +171,7 @@ func SetupRoutes(
 		"email_service":        "✅ Professional email templates",
 		"search_integration":   "✅ PostgreSQL full-text search enabled",
 		"dashboard_monitoring": "✅ Real-time API monitoring enabled",
+		"google_oauth":         "✅ Google Sign-In and Sign-Up enabled",
 	})
 
 	// ===============================
@@ -177,6 +181,7 @@ func SetupRoutes(
 	app.Get("/health", func(c *fiber.Ctx) error {
 		features := fiber.Map{
 			"authentication":       true,
+			"google_oauth":         true,
 			"news_aggregation":     true,
 			"search":               searchHandler != nil,
 			"postgresql_fulltext":  searchHandler != nil,
@@ -196,7 +201,7 @@ func SetupRoutes(
 			"service":      "gonews-api",
 			"version":      "1.0.0",
 			"checkpoint":   determineCheckpoint(finalPerformanceService != nil),
-			"architecture": "Database-First News Aggregation with Dashboard Monitoring + PostgreSQL Search + OTP Verification",
+			"architecture": "Database-First News Aggregation with Dashboard Monitoring + PostgreSQL Search + OTP Verification + Google OAuth",
 			"features":     features,
 			"timestamp":    time.Now().Format(time.RFC3339),
 		})
@@ -211,8 +216,8 @@ func SetupRoutes(
 	// Public routes (no authentication required)
 	setupPublicRoutes(api, newsHandler)
 
-	// Enhanced authentication routes with OTP
-	setupAuthRoutesWithOTP(api, authHandler, jwtManager)
+	// Enhanced authentication routes with OTP + Google OAuth
+	setupAuthRoutesWithOTPAndGoogle(api, authHandler, jwtManager)
 
 	// News routes with database-first integration
 	setupNewsRoutes(api, newsHandler, jwtManager, finalNewsService, log)
@@ -223,7 +228,7 @@ func SetupRoutes(
 		log.Info("Search routes configured ✅")
 	}
 
-	// NEW: Dashboard routes for API monitoring (Admin only)
+	// Dashboard routes for API monitoring (Admin only)
 	setupDashboardRoutes(api, dashboardHandler, jwtManager)
 	log.Info("Dashboard routes configured ✅")
 
@@ -248,7 +253,7 @@ func SetupRoutes(
 
 	log.Info("All routes configured successfully", map[string]interface{}{
 		"public_routes":          "✅",
-		"auth_routes":            "✅ Enhanced with OTP verification",
+		"auth_routes":            "✅ Enhanced with OTP verification + Google OAuth",
 		"news_routes":            "✅ Database-first enabled",
 		"search_routes":          searchHandler != nil,
 		"dashboard_routes":       "✅ API monitoring and debugging",
@@ -260,11 +265,129 @@ func SetupRoutes(
 		"otp_integration":        "✅ Complete OTP workflow enabled",
 		"search_integration":     "✅ PostgreSQL full-text search enabled",
 		"monitoring_integration": "✅ Real-time dashboard monitoring enabled",
+		"google_oauth":           "✅ Google Sign-In and Sign-Up enabled",
 	})
 }
 
 // ===============================
-// NEW: DASHBOARD ROUTES SETUP
+// ENHANCED AUTHENTICATION ROUTES WITH OTP + GOOGLE OAUTH
+// ===============================
+
+// setupAuthRoutesWithOTPAndGoogle configures authentication routes with OTP and Google OAuth integration
+func setupAuthRoutesWithOTPAndGoogle(api fiber.Router, authHandler *handlers.AuthHandler, jwtManager *auth.JWTManager) {
+	auth := api.Group("/auth")
+
+	// ===============================
+	// PUBLIC AUTHENTICATION ENDPOINTS
+	// ===============================
+
+	// Traditional email/password authentication
+	auth.Post("/login", authHandler.Login)
+	auth.Post("/logout", authHandler.Logout)
+	auth.Post("/refresh", authHandler.RefreshToken)
+
+	// Enhanced registration flow with OTP
+	auth.Post("/register", authHandler.Register)                             // Step 1: Send OTP
+	auth.Post("/verify-registration-otp", authHandler.VerifyRegistrationOTP) // Step 2: Verify OTP
+	auth.Post("/complete-registration", authHandler.CompleteRegistration)    // Step 3: Complete registration
+
+	// Enhanced password reset flow with OTP
+	auth.Post("/forgot-password", authHandler.SendPasswordResetOTP)             // Step 1: Send reset OTP
+	auth.Post("/verify-password-reset-otp", authHandler.VerifyPasswordResetOTP) // Step 2: Verify reset OTP
+	auth.Post("/reset-password", authHandler.ResetPassword)                     // Step 3: Reset password
+
+	// OTP utilities
+	auth.Post("/resend-otp", authHandler.ResendOTP) // Resend any OTP type
+
+	// Google OAuth endpoints (NEW)
+	auth.Post("/google-signin", authHandler.GoogleSignIn) // Google Sign-In for existing users
+	auth.Post("/google-signup", authHandler.GoogleSignUp) // Google Sign-Up for new users
+
+	// Utility endpoints
+	auth.Post("/check-password", authHandler.CheckPasswordStrength)
+
+	// ===============================
+	// PROTECTED AUTHENTICATION ENDPOINTS (JWT required)
+	// ===============================
+
+	authProtected := auth.Use(middleware.AuthMiddleware(jwtManager))
+	authProtected.Get("/me", authHandler.GetProfile)
+	authProtected.Put("/me", authHandler.UpdateProfile)
+	authProtected.Post("/change-password", authHandler.ChangePassword)
+	authProtected.Get("/stats", authHandler.GetUserStats)
+	authProtected.Post("/verify-email", authHandler.VerifyEmail)
+	authProtected.Delete("/account", authHandler.DeactivateAccount)
+
+	// ===============================
+	// STATUS ENDPOINTS (for debugging)
+	// ===============================
+
+	// OTP status endpoint (public but rate-limited)
+	auth.Get("/otp-status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"otp_service":   "operational",
+			"email_service": "operational",
+			"rate_limiting": "enabled",
+			"supported_types": []string{
+				"registration",
+				"password_reset",
+				"email_verification",
+			},
+			"settings": fiber.Map{
+				"otp_length":      6,
+				"expiry_minutes":  5,
+				"max_attempts":    3,
+				"resend_cooldown": 60,
+				"daily_limit":     10,
+			},
+		})
+	})
+
+	// Google OAuth status endpoint (public)
+	auth.Get("/google-status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"google_oauth":  "operational",
+			"provider":      "Google",
+			"rate_limiting": "enabled",
+			"features": fiber.Map{
+				"sign_in":      "enabled",
+				"sign_up":      "enabled",
+				"auto_profile": "enabled",
+			},
+			"endpoints": []string{
+				"/auth/google-signin",
+				"/auth/google-signup",
+			},
+		})
+	})
+
+	// Combined authentication status
+	auth.Get("/status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"authentication": "operational",
+			"methods": fiber.Map{
+				"email_password":   "enabled",
+				"google_oauth":     "enabled",
+				"otp_verification": "enabled",
+			},
+			"features": fiber.Map{
+				"registration":       "enabled",
+				"password_reset":     "enabled",
+				"email_verification": "enabled",
+				"profile_management": "enabled",
+				"jwt_tokens":         "enabled",
+			},
+			"security": fiber.Map{
+				"rate_limiting":       "enabled",
+				"password_validation": "enabled",
+				"account_lockout":     "enabled",
+			},
+		})
+	})
+}
+
+// ===============================
+// DASHBOARD ROUTES SETUP
 // ===============================
 
 // setupDashboardRoutes configures dashboard monitoring routes (Admin only)
@@ -335,10 +458,11 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 		return c.JSON(fiber.Map{
 			"api_version":  "1.0.0",
 			"status":       "operational",
-			"checkpoint":   "Dashboard Integration Complete",
-			"architecture": "Database-First News Aggregation with Dashboard Monitoring + PostgreSQL Search + OTP Verification",
+			"checkpoint":   "Dashboard Integration Complete with Google OAuth",
+			"architecture": "Database-First News Aggregation with Dashboard Monitoring + PostgreSQL Search + OTP Verification + Google OAuth",
 			"features": fiber.Map{
 				"authentication":         true,
+				"google_oauth":           true,
 				"news_aggregation":       true,
 				"user_profiles":          true,
 				"bookmarks":              true,
@@ -357,6 +481,11 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 				"email_service":          true,
 				"dashboard_monitoring":   true,
 			},
+			"authentication_methods": fiber.Map{
+				"email_password": "enabled",
+				"google_oauth":   "enabled",
+				"otp_flow":       "enabled",
+			},
 			"api_sources": fiber.Map{
 				"newsdata_io": "active (database-first fallback)",
 				"gnews":       "active (database-first fallback)",
@@ -372,6 +501,7 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 			},
 			"security": fiber.Map{
 				"otp_verification": "enabled",
+				"google_oauth":     "enabled",
 				"email_templates":  "professional",
 				"rate_limiting":    "enabled",
 				"jwt_auth":         "enabled",
@@ -393,71 +523,6 @@ func setupPublicRoutes(api fiber.Router, newsHandler *handlers.NewsHandler) {
 		return c.JSON(fiber.Map{
 			"message": "Password strength check endpoint",
 			"status":  "available",
-		})
-	})
-}
-
-// setupAuthRoutesWithOTP configures authentication routes with OTP integration
-func setupAuthRoutesWithOTP(api fiber.Router, authHandler *handlers.AuthHandler, jwtManager *auth.JWTManager) {
-	auth := api.Group("/auth")
-
-	// ===============================
-	// PUBLIC AUTHENTICATION ENDPOINTS
-	// ===============================
-
-	// Enhanced registration flow with OTP
-	auth.Post("/register", authHandler.Register)                             // Step 1: Send OTP
-	auth.Post("/verify-registration-otp", authHandler.VerifyRegistrationOTP) // Step 2: Verify OTP
-	auth.Post("/complete-registration", authHandler.CompleteRegistration)    // Step 3: Complete registration
-
-	// Enhanced password reset flow with OTP
-	auth.Post("/forgot-password", authHandler.SendPasswordResetOTP)             // Step 1: Send reset OTP
-	auth.Post("/verify-password-reset-otp", authHandler.VerifyPasswordResetOTP) // Step 2: Verify reset OTP
-	auth.Post("/reset-password", authHandler.ResetPassword)                     // Step 3: Reset password
-
-	// OTP utilities
-	auth.Post("/resend-otp", authHandler.ResendOTP) // Resend any OTP type
-
-	// Standard authentication endpoints
-	auth.Post("/login", authHandler.Login)
-	auth.Post("/refresh", authHandler.RefreshToken)
-	auth.Post("/check-password", authHandler.CheckPasswordStrength)
-
-	// ===============================
-	// PROTECTED AUTHENTICATION ENDPOINTS (JWT required)
-	// ===============================
-
-	authProtected := auth.Use(middleware.AuthMiddleware(jwtManager))
-	authProtected.Get("/me", authHandler.GetProfile)
-	authProtected.Put("/me", authHandler.UpdateProfile)
-	authProtected.Post("/change-password", authHandler.ChangePassword)
-	authProtected.Post("/logout", authHandler.Logout)
-	authProtected.Get("/stats", authHandler.GetUserStats)
-	authProtected.Post("/verify-email", authHandler.VerifyEmail)
-	authProtected.Delete("/account", authHandler.DeactivateAccount)
-
-	// ===============================
-	// OTP STATUS ENDPOINTS (for debugging)
-	// ===============================
-
-	// OTP status endpoint (public but rate-limited)
-	auth.Get("/otp-status", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"otp_service":   "operational",
-			"email_service": "operational",
-			"rate_limiting": "enabled",
-			"supported_types": []string{
-				"registration",
-				"password_reset",
-				"email_verification",
-			},
-			"settings": fiber.Map{
-				"otp_length":      6,
-				"expiry_minutes":  5,
-				"max_attempts":    3,
-				"resend_cooldown": 60,
-				"daily_limit":     10,
-			},
 		})
 	})
 }
@@ -827,6 +892,27 @@ func setupNewsHealthRoutes(app *fiber.App, newsHandler *handlers.NewsHandler) {
 			"last_check": time.Now().Format(time.RFC3339),
 		})
 	})
+
+	// Google OAuth service health check
+	app.Get("/health/google-oauth", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":       "healthy",
+			"google_oauth": "operational",
+			"provider":     "Google",
+			"features": fiber.Map{
+				"sign_in":          "enabled",
+				"sign_up":          "enabled",
+				"token_validation": "enabled",
+				"profile_fetch":    "enabled",
+				"rate_limiting":    "enabled",
+			},
+			"endpoints": []string{
+				"/auth/google-signin",
+				"/auth/google-signup",
+			},
+			"last_check": time.Now().Format(time.RFC3339),
+		})
+	})
 }
 
 // setupSearchHealthRoutes sets up search health check endpoints
@@ -875,7 +961,7 @@ func setupPerformanceHealthRoutes(app *fiber.App, performanceHandler *handlers.P
 	})
 }
 
-// NEW: setupDashboardHealthRoutes sets up dashboard health check endpoints
+// setupDashboardHealthRoutes sets up dashboard health check endpoints
 func setupDashboardHealthRoutes(app *fiber.App, dashboardHandler *handlers.DashboardHandler) {
 	// Dashboard health check
 	app.Get("/health/dashboard", dashboardHandler.GetDashboardHealth)
@@ -993,9 +1079,9 @@ func setupLegacyPlaceholderRoutes(protected fiber.Router) {
 // determineCheckpoint returns the current checkpoint based on features available
 func determineCheckpoint(hasAdvancedFeatures bool) string {
 	if hasAdvancedFeatures {
-		return "Dashboard Integration Complete (Database-First + Dashboard Monitoring + PostgreSQL Search + OTP)"
+		return "Dashboard Integration Complete with Google OAuth (Database-First + Dashboard Monitoring + PostgreSQL Search + OTP + Google OAuth)"
 	}
-	return "Dashboard Integration Complete"
+	return "Dashboard Integration Complete with Google OAuth"
 }
 
 // ===============================
@@ -1013,7 +1099,7 @@ type RouteInfo struct {
 // GetAllRoutes returns documentation for all available routes
 func GetAllRoutes() []RouteInfo {
 	return []RouteInfo{
-		// Dashboard Routes (NEW)
+		// Dashboard Routes
 		{Method: "GET", Path: "/api/v1/admin/dashboard/metrics", Description: "Get comprehensive system metrics for dashboard", AuthLevel: "admin"},
 		{Method: "GET", Path: "/api/v1/admin/dashboard/logs", Description: "Get real-time logs for debugging", AuthLevel: "admin"},
 		{Method: "GET", Path: "/api/v1/admin/dashboard/health", Description: "Get comprehensive health status", AuthLevel: "admin"},
@@ -1021,28 +1107,106 @@ func GetAllRoutes() []RouteInfo {
 		{Method: "GET", Path: "/api/v1/admin/dashboard/performance", Description: "Get system performance overview", AuthLevel: "admin"},
 		{Method: "GET", Path: "/api/v1/admin/dashboard/stats/realtime", Description: "Get real-time statistics", AuthLevel: "admin"},
 
-		// Authentication Routes
+		// Authentication Routes - Traditional
 		{Method: "POST", Path: "/api/v1/auth/register", Description: "Start registration with OTP", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/verify-registration-otp", Description: "Verify registration OTP", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/complete-registration", Description: "Complete registration after OTP verification", AuthLevel: "public"},
 		{Method: "POST", Path: "/api/v1/auth/login", Description: "User login", AuthLevel: "public"},
-		{Method: "GET", Path: "/api/v1/auth/me", Description: "Get current user profile", AuthLevel: "authenticated"},
+		{Method: "POST", Path: "/api/v1/auth/logout", Description: "User logout", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/refresh", Description: "Refresh JWT tokens", AuthLevel: "public"},
 
-		// News Routes
+		// Authentication Routes - Password Reset
+		{Method: "POST", Path: "/api/v1/auth/forgot-password", Description: "Send password reset OTP", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/verify-password-reset-otp", Description: "Verify password reset OTP", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/reset-password", Description: "Reset password after OTP verification", AuthLevel: "public"},
+
+		// Authentication Routes - Google OAuth (NEW)
+		{Method: "POST", Path: "/api/v1/auth/google-signin", Description: "Google Sign-In for existing users", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/google-signup", Description: "Google Sign-Up for new users", AuthLevel: "public"},
+
+		// Authentication Routes - Utilities
+		{Method: "POST", Path: "/api/v1/auth/resend-otp", Description: "Resend any OTP type", AuthLevel: "public"},
+		{Method: "POST", Path: "/api/v1/auth/check-password", Description: "Check password strength", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/auth/otp-status", Description: "Get OTP service status", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/auth/google-status", Description: "Get Google OAuth service status", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/auth/status", Description: "Get authentication service status", AuthLevel: "public"},
+
+		// Authentication Routes - Protected
+		{Method: "GET", Path: "/api/v1/auth/me", Description: "Get current user profile", AuthLevel: "authenticated"},
+		{Method: "PUT", Path: "/api/v1/auth/me", Description: "Update user profile", AuthLevel: "authenticated"},
+		{Method: "POST", Path: "/api/v1/auth/change-password", Description: "Change user password", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/auth/stats", Description: "Get user statistics", AuthLevel: "authenticated"},
+		{Method: "POST", Path: "/api/v1/auth/verify-email", Description: "Verify email address", AuthLevel: "authenticated"},
+		{Method: "DELETE", Path: "/api/v1/auth/account", Description: "Deactivate user account", AuthLevel: "authenticated"},
+
+		// News Routes - Public
 		{Method: "GET", Path: "/api/v1/news", Description: "Get main news feed (database-first)", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/", Description: "Get main news feed (database-first)", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/feed", Description: "Get main news feed (alternative path)", AuthLevel: "public"},
 		{Method: "GET", Path: "/api/v1/news/category/:category", Description: "Get category-specific news", AuthLevel: "public"},
-		{Method: "GET", Path: "/api/v1/news/search", Description: "Search news articles", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/search", Description: "Search news articles (legacy)", AuthLevel: "public"},
 		{Method: "GET", Path: "/api/v1/news/trending", Description: "Get trending news", AuthLevel: "public"},
 		{Method: "GET", Path: "/api/v1/news/categories", Description: "Get available categories", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/news/stats", Description: "Get news statistics", AuthLevel: "public"},
 
-		// Search Routes
+		// News Routes - Mixed Auth
+		{Method: "GET", Path: "/api/v1/news/bookmarks", Description: "Get bookmarks (demo for unauth, real for auth)", AuthLevel: "optional"},
+		{Method: "POST", Path: "/api/v1/news/read", Description: "Track article read", AuthLevel: "optional"},
+		{Method: "GET", Path: "/api/v1/news/personalized", Description: "Get personalized feed", AuthLevel: "optional"},
+
+		// News Routes - Authenticated
+		{Method: "POST", Path: "/api/v1/news/refresh", Description: "Manual news refresh", AuthLevel: "authenticated"},
+		{Method: "POST", Path: "/api/v1/news/bookmarks", Description: "Add bookmark", AuthLevel: "authenticated"},
+		{Method: "DELETE", Path: "/api/v1/news/bookmarks/:id", Description: "Remove bookmark", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/news/history", Description: "Get reading history", AuthLevel: "authenticated"},
+
+		// Search Routes - Public
 		{Method: "GET", Path: "/api/v1/search", Description: "PostgreSQL full-text search", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/content", Description: "Content-based search", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/category", Description: "Category-specific search", AuthLevel: "public"},
 		{Method: "GET", Path: "/api/v1/search/suggestions", Description: "Get search suggestions", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/popular", Description: "Get popular search terms", AuthLevel: "public"},
 		{Method: "GET", Path: "/api/v1/search/trending", Description: "Get trending search terms", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/related", Description: "Get related search terms", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/search/status", Description: "Get search service status", AuthLevel: "public"},
+
+		// Search Routes - Authenticated
+		{Method: "GET", Path: "/api/v1/search/similar/:id", Description: "Get similar articles", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/search/analytics", Description: "Get search analytics", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/search/performance", Description: "Get search performance stats", AuthLevel: "authenticated"},
+
+		// Performance Routes - Public
+		{Method: "GET", Path: "/api/v1/performance/status", Description: "Basic performance status", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/performance/system-metrics", Description: "System metrics", AuthLevel: "public"},
+		{Method: "GET", Path: "/api/v1/performance/cache-analytics", Description: "Cache analytics", AuthLevel: "public"},
+
+		// Performance Routes - Authenticated
+		{Method: "GET", Path: "/api/v1/performance/report", Description: "Performance report", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/performance/query-stats", Description: "Query statistics", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/performance/database", Description: "Database performance", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/performance/trends", Description: "Performance trends", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/performance/alerts", Description: "Performance alerts", AuthLevel: "authenticated"},
+		{Method: "GET", Path: "/api/v1/performance/cache-warmup", Description: "Cache warmup status", AuthLevel: "authenticated"},
 
 		// Health Check Routes
 		{Method: "GET", Path: "/health", Description: "Basic health check", AuthLevel: "public"},
-		{Method: "GET", Path: "/health/dashboard", Description: "Dashboard health check", AuthLevel: "public"},
 		{Method: "GET", Path: "/health/news", Description: "News service health check", AuthLevel: "public"},
-		{Method: "GET", Path: "/health/database", Description: "Database health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/news/detailed", Description: "Detailed news health check", AuthLevel: "public"},
 		{Method: "GET", Path: "/health/cache", Description: "Cache health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/database", Description: "Database health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/apis", Description: "External APIs health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/database-first", Description: "Database-first architecture health", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/live-apis", Description: "Live API integration health", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/otp", Description: "OTP service health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/google-oauth", Description: "Google OAuth service health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/search", Description: "Search service health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/search/system", Description: "Search system status", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/performance", Description: "Performance health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/performance/system", Description: "Performance system health", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/dashboard", Description: "Dashboard health check", AuthLevel: "public"},
+		{Method: "GET", Path: "/health/dashboard/system", Description: "Dashboard system status", AuthLevel: "public"},
+
+		// Status Routes
+		{Method: "GET", Path: "/api/v1/status", Description: "API status and features", AuthLevel: "public"},
 	}
 }

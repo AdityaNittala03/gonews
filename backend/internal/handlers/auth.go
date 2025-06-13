@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 
 	"backend/internal/middleware"
 	"backend/internal/models"
@@ -15,21 +18,29 @@ import (
 
 // AuthHandler handles authentication HTTP requests
 type AuthHandler struct {
-	authService  *services.AuthService
-	otpService   *services.OTPService
-	emailService *services.EmailService
-	userRepo     *repository.UserRepository
-	validator    *validator.Validate
+	authService        *services.AuthService
+	otpService         *services.OTPService
+	emailService       *services.EmailService
+	userRepo           *repository.UserRepository
+	googleOAuthService *services.GoogleOAuthService
+	validator          *validator.Validate
 }
 
 // NewAuthHandler creates a new authentication handler
-func NewAuthHandler(authService *services.AuthService, otpService *services.OTPService, emailService *services.EmailService, userRepo *repository.UserRepository) *AuthHandler {
+func NewAuthHandler(
+	authService *services.AuthService,
+	otpService *services.OTPService,
+	emailService *services.EmailService,
+	userRepo *repository.UserRepository,
+	googleOAuthService *services.GoogleOAuthService, // ADD THIS PARAMETER
+) *AuthHandler {
 	return &AuthHandler{
-		authService:  authService,
-		otpService:   otpService,
-		emailService: emailService,
-		userRepo:     userRepo,
-		validator:    validator.New(),
+		authService:        authService,
+		otpService:         otpService,
+		emailService:       emailService,
+		userRepo:           userRepo,
+		googleOAuthService: googleOAuthService, // ADD THIS LINE
+		validator:          validator.New(),
 	}
 }
 
@@ -541,6 +552,167 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	return c.JSON(models.SuccessResponse{
 		Success: true,
 		Message: "Login successful",
+		Data:    response,
+	})
+}
+
+// GoogleSignIn handles Google OAuth sign-in
+// POST /api/v1/auth/google-signin
+func (h *AuthHandler) GoogleSignIn(c *fiber.Ctx) error {
+	var req struct {
+		IDToken     string `json:"id_token" validate:"required"`
+		AccessToken string `json:"access_token,omitempty"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	// Verify Google ID token (you'll need to inject GoogleOAuthService)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	googleUser, err := h.googleOAuthService.VerifyIDToken(ctx, req.IDToken)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid Google token",
+		})
+	}
+
+	// Check if user exists
+	user, err := h.userRepo.GetUserByEmail(googleUser.Email)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "No account found with this Google email. Please sign up first.",
+		})
+	}
+
+	// Check if user is active
+	if !user.IsActive {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "User account has been deactivated",
+		})
+	}
+
+	// Update user profile with Google info if needed
+	if user.AvatarURL == nil && googleUser.Picture != "" {
+		user.AvatarURL = &googleUser.Picture
+		h.userRepo.UpdateUser(user)
+	}
+
+	// Login the user using existing auth service
+	// loginReq := &models.LoginRequest{
+	// 	Email:    googleUser.Email,
+	// 	Password: "", // No password for Google users
+	// }
+
+	// Use a special method or modify existing login for Google users
+	response, err := h.authService.LoginWithGoogle(user)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to authenticate user",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Google sign-in successful",
+		Data:    response,
+	})
+}
+
+// GoogleSignUp handles Google OAuth sign-up
+// POST /api/v1/auth/google-signup
+func (h *AuthHandler) GoogleSignUp(c *fiber.Ctx) error {
+	var req struct {
+		IDToken     string `json:"id_token" validate:"required"`
+		AccessToken string `json:"access_token,omitempty"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid request body",
+		})
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Validation failed",
+			Details: h.formatValidationErrors(err),
+		})
+	}
+
+	// Verify Google ID token
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	googleUser, err := h.googleOAuthService.VerifyIDToken(ctx, req.IDToken)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Invalid Google token",
+		})
+	}
+
+	// Check if user already exists
+	existingUser, _ := h.userRepo.GetUserByEmail(googleUser.Email)
+	if existingUser != nil {
+		return c.Status(fiber.StatusConflict).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Account with this Google email already exists. Please sign in instead.",
+		})
+	}
+
+	// Create new user from Google info
+	user := &models.User{
+		ID:                   uuid.New(),
+		Email:                googleUser.Email,
+		Name:                 googleUser.Name,
+		AvatarURL:            &googleUser.Picture,
+		Preferences:          models.DefaultUserPreferences(),
+		NotificationSettings: models.DefaultNotificationSettings(),
+		PrivacySettings:      models.DefaultPrivacySettings(),
+		IsActive:             true,
+		IsVerified:           true, // Google emails are already verified
+		// No password hash for Google users
+	}
+
+	// Save to database
+	err = h.userRepo.CreateUser(user)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to create user account",
+		})
+	}
+
+	// Generate tokens using existing auth service
+	response, err := h.authService.LoginWithGoogle(user)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse{
+			Error:   true,
+			Message: "Failed to generate tokens",
+		})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(models.SuccessResponse{
+		Success: true,
+		Message: "Google sign-up successful",
 		Data:    response,
 	})
 }

@@ -142,6 +142,39 @@ func (s *AuthService) Login(req *models.LoginRequest) (*models.AuthResponse, err
 	}, nil
 }
 
+// LoginWithGoogle authenticates a user via Google OAuth
+func (s *AuthService) LoginWithGoogle(user *models.User) (*models.AuthResponse, error) {
+	// Check if user is active
+	if !user.IsActive {
+		return nil, ErrUserNotActive
+	}
+
+	// Update last login
+	err := s.userRepo.UpdateLastLogin(user.ID)
+	if err != nil {
+		// Log error but don't fail login
+		// In production, you'd want to log this properly
+	}
+
+	// Generate JWT tokens
+	tokenPair, err := s.jwtManager.GenerateTokenPair(user.ID, user.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update user with latest login time for response
+	user.LastLoginAt = &time.Time{}
+	*user.LastLoginAt = time.Now()
+
+	return &models.AuthResponse{
+		User:         user.PublicUser(),
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		ExpiresAt:    tokenPair.ExpiresAt.Format(time.RFC3339),
+		TokenType:    tokenPair.TokenType,
+	}, nil
+}
+
 // RefreshToken generates new tokens using a refresh token
 func (s *AuthService) RefreshToken(req *models.RefreshTokenRequest) (*models.AuthResponse, error) {
 	// Generate new token pair using refresh token

@@ -32,6 +32,10 @@ type Config struct {
 	AdminPrimary   AdminCredentials
 	AdminSecondary AdminCredentials
 
+	// Google OAuth Configuration
+	GoogleClientID     string
+	GoogleClientSecret string
+
 	// SMTP Configuration for OTP emails
 	SMTPHost     string
 	SMTPPort     int
@@ -215,6 +219,10 @@ func Load() (*Config, error) {
 		// Admin Configuration
 		AdminPrimary:   adminPrimary,
 		AdminSecondary: adminSecondary,
+
+		// Google OAuth Configuration
+		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 
 		// SMTP Configuration
 		SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),

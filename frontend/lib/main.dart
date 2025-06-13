@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:go_router/go_router.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'core/constants/app_constants.dart';
 import 'core/constants/color_constants.dart';
@@ -16,6 +17,9 @@ import '../core/providers/theme_provider.dart' as theme_provider;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase
+  await Firebase.initializeApp();
 
   // Initialize Hive for local storage
   await Hive.initFlutter();
